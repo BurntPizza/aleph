@@ -1,0 +1,20 @@
+[package]
+authors = ["BurntPizza <xburntpizza@gmail.com>"]
+license = "MIT"
+name = "aleph"
+version = "0.1.0"
+
+
+[lib]
+name = "aleph"
+
+[[bin]]
+name = "aleph"
+doc = false
+
+[dependencies]
+itertools = "0.4"
+clap = "^1.5.3"
+
+[dev-dependencies]
+quickcheck = "0.2"
