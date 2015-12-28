@@ -288,7 +288,7 @@ fn right_paren_reader<I>(_: &mut Reader<I>,
                          _: &mut CharStream<I>,
                          _: Char)
                          -> Result<Option<Ast>, ReadError>
-    where I: Iterator
+    where I: Iterator<Item = Char>
 {
     Err(ReadError::other("Unexpected right parenthesis"))
 }
@@ -311,7 +311,7 @@ impl<I: Iterator<Item = Char>> Default for MacroTable<I> {
 
 
 
-trait FSM<I, O, E> {
+trait FST<I, O, E> {
     fn init() -> Self;
     fn iter(self, I) -> Self;
     fn result(self) -> Result<O, E>;
@@ -326,7 +326,7 @@ enum TokenParser {
     Error(ReadError),
 }
 
-impl FSM<Char, Ast, ReadError> for TokenParser {
+impl FST<Char, Ast, ReadError> for TokenParser {
     fn init() -> Self {
         TokenParser::Init
     }

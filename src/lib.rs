@@ -19,6 +19,8 @@
 // macro expander ;; needs first: (scope system)
 // AST representation
 
+// TODO start on core lib
+
 
 #![warn(missing_docs)]
 
