@@ -1,0 +1,147 @@
+#+TITLE: Notes
+#+OPTIONS: num:nil
+
+* Major features
+** Reader
+   Consumes a text stream, produces a form.\\
+   
+   
+*** Reader macros   
+
+*** TODO Forms
+Untyped syntax tree, essentially.\\
+Need to figure out what the fundamental variants here are.\\
+Forms should provide span information, for compiler messages.
+
+Possibly / Probably:
+| *List* | Sequence of forms. |
+| *Atom* |                    |
+
+Clojure's model:
+#+BEGIN_SRC clojure
+(def eval [form]
+  (-> form
+      macroexpand
+      analyze
+      execute)) ;; emit, etc.
+#+END_SRC
+   
+
+*** Macros
+  
+*** Analyzer
+Takes in a form, produces a typed AST.\\
+Wait, do macros need to be type checked before expansion? (probably, right?)
+
+*** AST
+   
+** Type system
+  
+
+*** Numbers
+
+Use type-level integers?\\
+Could also then have Rational<N>\\
+What about range types? E.g. from Ada?\\
+
+- Fixed types
+
+| *i8*  |
+| *i16* |
+| *i32* |
+| *i64* |
+|-------|
+| *u8*  |
+| *u16* |
+| *u32* |
+| *u64* |
+|-------|
+| *f32* |
+| *f64* |
+
+- Auto-promoting types
+  
+| *int*  | Arbitrary size integer     |
+| *real* | Arbitrary size real number |
+      
+** Things to think about
+*** Macros vs. Compiler Macros (interception)
+
+*** Effects
+Including parametricity over effects
+*** Default arguments, default types
+Types: (rust-y syntax) Result<T, E = Error>\\
+Creates Result<T> and Result<T, E>
+*** Typed macros
+How do they work? How do they interact with other features?
+*** HKTs
+'' ''
+*** Typeclasses vs. ML Modules
+*** What is necessary for the interpreter?
+Start laying out a high-level design
+
+#+BEGIN_SRC clojure
+;; how do namespaces/modules fit into this?
+(-> String
+  InputStream
+  Form
+  AST
+#+END_SRC  
+
+
+**** Namespaces
+
+
+
+* Glossary
+
+- form :: (needs revision)
+         A list, identifier, or a number.\\
+         What else? Is this a bounded category?\\
+         Is there a 'generalized object' type of form?
+
+- read :: Function that deserializes an object/form from a text stream.
+- eval :: Evalutates an object/form.
+   
+
+
+* Library ideas
+
+** Error resolution suggestion/completion
+** Visual REPL extensions
+** SQL DSL/Parser
+** Infix math
+** equivalent to call-haskell-from-anything
+** code manipulation tooling
+Will involve some pretty-printing
+- syntax highlighting
+- formatter
+- error/warning reporting
+- (symbols in scope/variants & methods of type) for autocomplete
+- extensibilty system for this (i.e. plugins)
+- create aliases for overloaded function variants
+- documentation search engine
+  - Limit by scope (current ns, std lib, imported libs, etc.)
+  - Search item desctiptions as well as names and types
+- fuzzy expression-shape searching
+** literate programming
+Polymorphic on host markup language?
+** Coroutines, stack(ful/less)
+** async/await
+** whole alternate syntaxes (and conversions to/from?)
+-----
+** KWargs as a macro?? 
+(kw the-func map-or-struct-or-arg-pairs)
+** macros to copy-with-modification existing code
+- Add/change variants to type
+- similar with namespaces
+- memotize a function
+- make a recursive function use iteration+heap
+** module dependancy graph creation
+Perhaps a generalized dependancy graph module?
+** pretty printing
+Include incorporation of formatting info? (e.g. [color, style] spans?)
+- code
+- tables
+- graphs
+- 

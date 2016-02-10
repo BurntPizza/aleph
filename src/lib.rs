@@ -24,13 +24,63 @@
 
 #![warn(missing_docs)]
 
+
+
 extern crate itertools;
 
+pub mod form;
+use form::*;
+pub mod reader2;
+//pub mod stream;
 
 
-pub mod reader;
+
+// TODOs
+
+/// Note: guaranteed to be ASCII
+pub struct InputStream {
+    src: String,
+    idx: usize,
+}
+
+impl InputStream {
+    fn new(src: String) -> Self {        
+        assert!(std::ascii::AsciiExt::is_ascii(&*src));
+        InputStream {
+            src: src,
+            idx: 0
+        }
+    }
+
+    fn unread(&mut self) {
+        assert!(self.idx > 0);
+        self.idx -= 1;
+    }
+
+    fn rewind(&mut self) {
+        self.idx = 0;
+    }
+}
+
+impl Iterator for InputStream {
+    type Item = u8;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx < self.src.len() {
+            let c = Some(self.src.as_bytes()[self.idx]);
+            self.idx += 1;
+            c
+        } else {None}
+    }
+}
 
 
+/*
 
-#[cfg(test)]
-extern crate quickcheck;
+Next: impl read() and organize reader module
+then: analyze() & AST (just basic type system)
+
+Get something working. Stop thinking so hard.
+Don't need to implement namespaces to have basic interpretation going on.
+ITERATE!
+
+*/

@@ -3,6 +3,9 @@ extern crate aleph;
 use aleph::reader;
 
 
+extern crate itertools;
+use itertools::*;
+
 #[macro_use]
 extern crate clap;
 
@@ -11,6 +14,7 @@ use clap::{App, AppSettings, SubCommand};
 
 use std::fs::*;
 use std::io::{stderr, Read, Write};
+
 
 // mostly just temp impl for testing
 

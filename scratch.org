@@ -1,0 +1,18 @@
+* read()
+:: InputStream, ReaderContext -> Result<(Form, ReaderContext), ReaderContext>
+Parameter mutability or ownership?
+Figure out convention; mutable object method, 
+function with mutable arg, some kind of monadic combinator?
+Leaning towards combinator, but don't know how that will play out.
+** InputStream
+Error recovery?
+** ReaderContext
+Keeps track of:
+- ReadErrors
+- ReaderMacros
+- 
+** Form
+Lexical program representation (post reader macro expansion): tree of tokens.
+To support error recovery:
+*** Span
+

@@ -4,10 +4,7 @@ use std::fmt::{self, Display, Debug, Formatter};
 use std::ops::Index;
 use std::error;
 
-
-mod stream;
-use self::stream::{Char, CharType, CharStream};
-
+use stream::*;
 
 use self::Ast::*;
 
