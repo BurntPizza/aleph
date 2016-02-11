@@ -1,4 +1,9 @@
 
+//! Module for representing and manipulating programs in lexical form.
+//!
+//! *Should probably be a submodule of some kind of 'repr' module.*
+
+
 use std::fmt::{self, Display, Formatter};
 use std::collections::VecDeque;
 
@@ -6,10 +11,12 @@ use itertools::*;
 
 use self::Form::*;
 
-/// Lexical program representation
+/// Lexical program representation: untyped s-expressions.
 #[derive(Debug)]
 pub enum Form {
+    /// A token, such as an identifier, number, or anything that isn't a `List`.
     Atom(String),
+    /// A list of `Form`s, usually delimited by parentheses.
     List(VecDeque<Form>),
 }
 

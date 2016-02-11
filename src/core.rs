@@ -1,8 +1,11 @@
 
+//! The Core library: the language underpinnings.
+
 use reader::{ReaderContext, ReadError};
 use reader::CharSyntaxType::*;
 use form::Form;
 
+/// Reader macro function for line comments.
 pub fn line_comment_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
     loop {
         match reader.stream.next() {
@@ -14,8 +17,8 @@ pub fn line_comment_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<F
     Ok(None)
 }
 
+/// Reader macro function for reading list s-expressions delimited by parentheses.
 pub fn left_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
-
     let mut list = vec![];
 
     loop {
@@ -35,6 +38,7 @@ pub fn left_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<For
     }
 }
 
+/// Reader macro function to abort on unexpected closing parentheses.
 pub fn right_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
     reader.output.push(ReadError::other("Unexpected right parenthesis"));
     Err(())
