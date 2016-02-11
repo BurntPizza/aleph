@@ -28,10 +28,9 @@
 
 extern crate itertools;
 
+pub mod core;
 pub mod form;
-use form::*;
-pub mod reader2;
-//pub mod stream;
+pub mod reader;
 
 
 

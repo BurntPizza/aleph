@@ -2,7 +2,6 @@
 extern crate aleph;
 use aleph::reader;
 
-
 extern crate itertools;
 use itertools::*;
 
@@ -39,7 +38,12 @@ fn main() {
         println!("{:#?}", reader::ReadTable::default());
 
     } else if let Some(m) = matches.subcommand_matches("read") {
-        println!("{}", reader::parse(m.values_of("exprs").unwrap().join(" ")));
+        println!("{}",
+                 reader::read_string(m.values_of("exprs").unwrap().join(" "))
+                     .map(|form| format!("{}", form))
+                     .unwrap_or_else(|e| {
+                         e.into_iter().map(|err| format!("{:?}", err)).join("\n\n")
+                     }));
 
     } else if let Some(m) = matches.subcommand_matches("compile") {
         match File::open(m.value_of("file").unwrap()) {
@@ -58,7 +62,7 @@ fn main() {
                             write!(stderr(), "{}", e).expect("failed to write to stderr");
                             std::process::exit(-1);
                         });
-                        println!("{}", reader::parse(buf));
+                        println!("{:?}", reader::read_string(buf));
                     }
                 }
             }
