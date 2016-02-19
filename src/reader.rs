@@ -1,4 +1,6 @@
 
+//! Infrastructure for parsing code
+
 use std::collections::HashMap;
 use std::fmt::{self, Display, Debug, Formatter};
 
@@ -13,50 +15,77 @@ use self::MacroCharType::*;
 use self::ReaderState::*;
 use self::ReadErrorType::*;
 
-
+/// The type of functions implementing reader macros
 pub type MacroFunction = fn(&mut ReaderContext, u8) -> Result<Option<Form>, ()>;
 
+///
 #[derive(Debug)]
 pub enum ReadErrorType {
+    ///
     EOS,
+    ///
     EmptyToken, // merge these?
+    ///
     InvalidToken(String),
+    ///
     InvalidChar(u8),
+    ///
     NoMacro(u8),
+    ///
     Other(String),
 }
 
+///
 #[derive(Debug)]
 pub struct ReadError {
-    _type: ReadErrorType,
-    _desc: String,
+    type_: ReadErrorType,
+    desc: String,
 }
 
+///
 // note: chars do not need to track their position for now, recover that info from InputStream
+// this also should have to public
+// merge into Environment?
 pub struct ReaderContext {
+    ///
     pub stream: InputStream,
+    ///
     pub readtable: ReadTable,
+    ///
     pub macros: MacroTable,
+    ///
     pub output: Vec<ReadError>,
 }
 
+///
 pub struct ReadTable(HashMap<u8, CharSyntaxType>);
 
+///
 pub struct MacroTable(HashMap<u8, MacroFunction>);
 
+/// The classes of reader macro characters
 #[derive(Debug, PartialEq, Copy, Clone)]
 pub enum MacroCharType {
-    Term,
-    NonTerm,
+    /// A terminating macro character
+    Terminating,
+    /// A non-terminating macro character
+    Nonterminating,
 }
 
+/// The lexical classes of input characters
 #[derive(PartialEq, Copy, Clone)]
 pub enum CharSyntaxType {
+    /// An invalid character
     Invalid,
+    /// A whitespace character
     Whitespace,
+    /// A reader macro character
     MacroChar(MacroCharType),
+    /// A single-escape character
     SingleEscape,
+    /// A multiple-escape character
     MultEscape,
+    /// A character that constitutes a token
     TokenChar,
 }
 
@@ -69,7 +98,7 @@ enum ReaderState {
 }
 
 // TODO: move readtables etc. out to Environment, right?
-
+/// Read a Form from a String
 pub fn read_string(src: String) -> Result<Form, String> {
     // TODO DI
     let mut reader = ReaderContext {
@@ -94,33 +123,34 @@ impl From<ReadErrorType> for ReadError {
         };
 
         ReadError {
-            _type: src,
-            _desc: desc,
+            type_: src,
+            desc: desc,
         }
     }
 }
 
 impl ReadError {
+    /// 
     pub fn eos() -> Self {
         ReadErrorType::EOS.into()
     }
-
+    ///
     pub fn empty_token() -> Self {
         ReadErrorType::EmptyToken.into()
     }
-
+    ///
     pub fn invalid_token<S: Into<String>>(token: S) -> Self {
         ReadErrorType::InvalidToken(token.into()).into()
     }
-
+    ///
     pub fn invalid_char(c: u8) -> Self {
         ReadErrorType::InvalidChar(c).into()
     }
-
+    ///
     pub fn no_macro_for_char(c: u8) -> Self {
         ReadErrorType::NoMacro(c).into()
     }
-
+    ///
     pub fn other<S: Into<String>>(msg: S) -> Self {
         ReadErrorType::Other(msg.into()).into()
     }
@@ -203,7 +233,7 @@ impl ReaderContext {
                                         break;
                                     }
                                     // enter step 10
-                                    MacroChar(Term) => {
+                                    MacroChar(Terminating) => {
                                         self.stream.unread();
                                         state = TokenFinished;
                                         break;
@@ -217,7 +247,7 @@ impl ReaderContext {
                                     }
                                     MultEscape => {} // enter step 9
                                     // repeat step 8
-                                    TokenChar | MacroChar(NonTerm) => token.push(y),
+                                    TokenChar | MacroChar(Nonterminating) => token.push(y),
                                 }
                             }
                             // enter step 10
@@ -266,12 +296,15 @@ impl ReaderContext {
 
 
 impl MacroTable {
+    /// Look up a reader macro function for a character in the table
+    #[allow(map_clone)]
     pub fn get(&self, c: u8) -> Option<MacroFunction> {
         self.0.get(&c).map(|&f| f)
     }
 }
 
 impl ReadTable {
+    /// Look up the lexical class of a character in the table
     pub fn get(&self, c: u8) -> CharSyntaxType {
         *self.0.get(&c).unwrap_or(&Invalid)
     }
@@ -284,7 +317,7 @@ impl Default for ReadTable {
                           (c,
                            {
                               match c as char {
-                                  '(' | ')' | ';' => MacroChar(Term),
+                                  '(' | ')' | ';' => MacroChar(Terminating),
                                   '_' | '-' => TokenChar,
                                   c if c.is_alphanumeric() => TokenChar,
                                   c if c.is_whitespace() => Whitespace,
@@ -332,6 +365,6 @@ impl Debug for CharSyntaxType {
 
 impl Display for ReadError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", self._desc)
+        write!(f, "{}", self.desc)
     }
 }

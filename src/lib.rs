@@ -1,9 +1,12 @@
 
+//!The Aleph Programming Langauge
 
 #![warn(missing_docs)]
 
 #![cfg_attr(feature="clippy", feature(plugin))]
 #![cfg_attr(feature="clippy", plugin(clippy))]
+#![cfg_attr(not(feature="clippy"), allow(unknown_lints))]
+
 
 use std::collections::BTreeMap;
 
@@ -15,9 +18,12 @@ pub mod reader;
 
 use form::Form;
 
+/// 
 pub type Args<'a> = &'a [Form];
+///
 pub type Function = fn(Args) -> Result<Form, String>;
 
+///
 pub struct Environment {
     table: BTreeMap<String, Function>,
 }
@@ -31,7 +37,7 @@ impl Default for Environment {
     }
 }
 
-// eval() placeholder
+/// eval() placeholder
 pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
     match input {
         Form::Atom(_) => Ok(input),
@@ -41,7 +47,7 @@ pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
             let name = &elems[0];
             let args = &elems[1..];
 
-            if let &Form::Atom(ref s) = name {
+            if let Form::Atom(ref s) = *name {
                 match env.table.get(s) {
                     Some(f) => {
                         match f(args) {
@@ -61,12 +67,14 @@ pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
 
 
 /// Note: guaranteed to be ASCII
+#[derive(Clone)]
 pub struct InputStream {
     src: String,
     idx: usize,
 }
 
 impl InputStream {
+    ///
     pub fn new(src: String) -> Self {
         assert!(std::ascii::AsciiExt::is_ascii(&*src));
         InputStream { src: src, idx: 0 }
@@ -75,10 +83,6 @@ impl InputStream {
     fn unread(&mut self) {
         assert!(self.idx > 0);
         self.idx -= 1;
-    }
-
-    fn rewind(&mut self) {
-        self.idx = 0;
     }
 }
 

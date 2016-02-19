@@ -21,16 +21,17 @@ pub enum Form {
 }
 
 impl Form {
+    /// Construct an Atom containing a String
     pub fn atom(s: String) -> Self {
         Atom(s)
     }
-
+    /// Construct a list of forms
     pub fn list<I>(src: I) -> Self
         where I: IntoIterator<Item = Form>
     {
         List(src.into_iter().collect())
     }
-
+    /// Construct a List form containing nothing
     pub fn empty_list() -> Self {
         List(VecDeque::new())
     }
