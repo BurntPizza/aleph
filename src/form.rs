@@ -38,11 +38,10 @@ impl Form {
 
 impl Display for Form {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f,
-               "{}",
-               match *self {
-                   Atom(ref s) => s.clone(),
-                   List(ref list) => format!("({})", list.iter().join(" ")),
-               })
+        let s = match *self {
+            Atom(ref s) => s.clone(),
+            List(ref list) => format!("({})", list.iter().join(" ")),
+        };
+        write!(f, "{}", s)
     }
 }

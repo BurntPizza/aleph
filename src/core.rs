@@ -6,6 +6,7 @@ use itertools::*;
 use reader::{ReaderContext, ReadError};
 use reader::CharSyntaxType::*;
 use form::Form;
+use super::Args;
 
 /// Reader macro function for line comments.
 pub fn line_comment_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
@@ -46,16 +47,14 @@ pub fn right_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Fo
     Err(())
 }
 
-// these should take a Form or Ast, right?
-
 /// Print to stdout.
-pub fn print(s: super::Args) -> Result<Form, String> {
-    print!("{}", s.as_ref().iter().join(" "));
+pub fn print(s: Args) -> Result<Form, String> {
+    print!("{}", s.iter().join(" "));
     Ok(Form::empty_list())
 }
 
 /// Print to stdout with newline.
-pub fn println(s: super::Args) -> Result<Form, String> {
-    println!("{}", s.as_ref().iter().join(" "));
+pub fn println(s: Args) -> Result<Form, String> {
+    println!("{}", s.iter().join(" "));
     Ok(Form::empty_list())
 }

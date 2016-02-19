@@ -1,27 +1,5 @@
 
 
-// fix TODOs, panics, etc.
-
-// need to figure out default readtable. TODO: keep going
-// then reader macro table. TODO: figure out where it goes
-
-// TODO
-// namespaces: both the datastructure itself, and the DS for tracking them while parsing/analysing
-// overall DS is a stack, right? each 'stack frame' is an NS.
-
-
-// readtables ;; TODO: COW functionality
-// scope system ;; needs first: (namespace system?) ;; No, other way around
-//     scopes are tracked by a stack, the overall structure is a tree, rooted at the root scope
-//     what are namespaces exactly, if we already have scopes?
-//     just a set of public symbols? parent info?
-
-// macro expander ;; needs first: (scope system)
-// AST representation
-
-// TODO start on core lib
-
-
 #![warn(missing_docs)]
 
 use std::collections::BTreeMap;
@@ -54,7 +32,7 @@ impl Default for Environment {
 pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
     match input {
         Form::Atom(_) => Ok(input),
-        Form::List(ref v) if v.is_empty() => Ok(input.clone()),
+        Form::List(ref v) if v.is_empty() => Ok(Form::empty_list()),
         Form::List(ref v) => {
             let elems = v.as_slices().0;
             let name = &elems[0];
@@ -113,13 +91,3 @@ impl Iterator for InputStream {
         }
     }
 }
-
-
-// Next: impl read() and organize reader module
-// then: analyze() & AST (just basic type system)
-//
-// Get something working. Stop thinking so hard.
-// Don't need to implement namespaces to have basic interpretation going on.
-// ITERATE!
-//
-//

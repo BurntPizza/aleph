@@ -1,6 +1,6 @@
 
 extern crate aleph;
-use aleph::reader;
+use aleph::{reader, Environment};
 
 extern crate itertools;
 use itertools::*;
@@ -13,9 +13,7 @@ extern crate clap;
 
 use clap::{App, AppSettings, SubCommand};
 
-
-use std::fs::*;
-use std::io::{stderr, Read, Write};
+use std::io::prelude::*;
 
 
 // mostly just temp impl for testing
@@ -40,47 +38,29 @@ fn main() {
         println!("{:#?}", reader::ReadTable::default());
 
     } else if let Some(m) = matches.subcommand_matches("read") {
-        // TODO
-        //        println!("{}",
-        // reader::read_string(m.values_of("exprs").unwrap().join(" "))
-        // .map(|form| format!("{}", form))
-        // .unwrap_or_else(|e| {
-        // e.into_iter().map(|err| format!("{:?}", err)).join("\n\n")
-        // }));
-        //
+        println!("{}",
+                 reader::read_string(m.values_of("exprs").unwrap().join(" "))
+                     .and_then(|f| aleph::tmp_eval(&mut Environment::default(), f))
+                     .map(|f| Colour::Green.paint(f.to_string()))
+                     .unwrap_or_else(|e| Colour::Red.paint(e)));
+
     } else if let Some(_) = matches.subcommand_matches("repl") {
-
-
         // crappy repl
         println!("\nAleph {}\n\nEnter 'quit' to exit the REPL.", version);
 
-        let mut env = aleph::Environment::default();
+        let mut env = Environment::default();
+
         loop {
             print!("\n> ");
             std::io::stdout().flush().unwrap();
-            let mut input = String::new();
-            {
-                let mut bytes = std::io::stdin().bytes();
-                loop {
-                    // need real solution
-                    match bytes.next().map(|r| r.unwrap()) {
-                        Some(b) if b >= 32 && b < 127 => {
-                            input.push(b as char);
-                        }
-                        Some(b'\n') => {
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-            }
 
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input).unwrap();
             input = input.trim().to_owned();
+
             if input == "quit" {
                 break;
             }
-
-
 
             println!("{}",
                      reader::read_string(input)
