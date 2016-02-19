@@ -12,7 +12,7 @@ use itertools::*;
 use self::Form::*;
 
 /// Lexical program representation: untyped s-expressions.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Form {
     /// A token, such as an identifier, number, or anything that isn't a `List`.
     Atom(String),
@@ -29,6 +29,10 @@ impl Form {
         where I: IntoIterator<Item = Form>
     {
         List(src.into_iter().collect())
+    }
+
+    pub fn empty_list() -> Self {
+        List(VecDeque::new())
     }
 }
 

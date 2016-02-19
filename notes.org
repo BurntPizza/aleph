@@ -106,7 +106,8 @@ Start laying out a high-level design
 
 
 * Library ideas
-
+** Auto Refactor
+Use eqsat or something to shorten/idiomaticize source code 
 ** Error resolution suggestion/completion
 ** Visual REPL extensions
 ** SQL DSL/Parser

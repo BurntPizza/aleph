@@ -1,6 +1,8 @@
 
 //! The Core library: the language underpinnings.
 
+use itertools::*;
+
 use reader::{ReaderContext, ReadError};
 use reader::CharSyntaxType::*;
 use form::Form;
@@ -42,4 +44,18 @@ pub fn left_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<For
 pub fn right_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
     reader.output.push(ReadError::other("Unexpected right parenthesis"));
     Err(())
+}
+
+// these should take a Form or Ast, right?
+
+/// Print to stdout.
+pub fn print(s: super::Args) -> Result<Form, String> {
+    print!("{}", s.as_ref().iter().join(" "));
+    Ok(Form::empty_list())
+}
+
+/// Print to stdout with newline.
+pub fn println(s: super::Args) -> Result<Form, String> {
+    println!("{}", s.as_ref().iter().join(" "));
+    Ok(Form::empty_list())
 }

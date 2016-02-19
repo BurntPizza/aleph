@@ -1,7 +1,8 @@
 
 use std::collections::HashMap;
 use std::fmt::{self, Display, Debug, Formatter};
-use std::ops::{Deref, DerefMut};
+
+use itertools::*;
 
 use core;
 use form::Form;
@@ -11,7 +12,7 @@ use self::CharSyntaxType::*;
 use self::MacroCharType::*;
 use self::ReaderState::*;
 use self::ReadErrorType::*;
-use self::TokenParser::*;
+
 
 pub type MacroFunction = fn(&mut ReaderContext, u8) -> Result<Option<Form>, ()>;
 
@@ -67,14 +68,8 @@ enum ReaderState {
     TokenFinished,
 }
 
-enum TokenParser {
-    Init,
-    Symbol(String),
-    Error(ReadError),
-}
 
-
-pub fn read_string(src: String) -> Result<Form, Vec<ReadError>> {
+pub fn read_string(src: String) -> Result<Form, String> {
     // TODO DI
     let mut reader = ReaderContext {
         stream: InputStream::new(src),
@@ -82,7 +77,7 @@ pub fn read_string(src: String) -> Result<Form, Vec<ReadError>> {
         macros: MacroTable::default(),
         output: vec![],
     };
-    reader.read().map_err(move |_| reader.output)
+    reader.read().map_err(|_| reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
 }
 
 
@@ -92,7 +87,7 @@ impl From<ReadErrorType> for ReadError {
             EOS => "Unexpected end of stream".to_owned(),
             EmptyToken => "Empty token".to_owned(),
             InvalidToken(ref t) => format!("Invalid token: `{}`", t),
-            InvalidChar(c) => format!("Invalid character: `{}`", c),
+            InvalidChar(c) => format!("Invalid character: `{:?}`", c as char),
             NoMacro(c) => format!("No function found for macro character: `{}`", c),
             Other(ref msg) => msg.to_owned(),
         };
@@ -259,8 +254,9 @@ impl ReaderContext {
                     }
                 }
                 // step 10
-                TokenFinished => return Ok(Form::atom(String::from_utf8_lossy(&*token)
-                                                      .into_owned())),
+                TokenFinished => {
+                    return Ok(Form::atom(String::from_utf8_lossy(&*token).into_owned()))
+                }
             }
         }
     }
@@ -333,3 +329,8 @@ impl Debug for CharSyntaxType {
     }
 }
 
+impl Display for ReadError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self._desc)
+    }
+}
