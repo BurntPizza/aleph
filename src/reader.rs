@@ -68,6 +68,7 @@ enum ReaderState {
     TokenFinished,
 }
 
+// TODO: move readtables etc. out to Environment, right?
 
 pub fn read_string(src: String) -> Result<Form, String> {
     // TODO DI
@@ -127,6 +128,7 @@ impl ReadError {
 
 
 impl ReaderContext {
+    /// Ported from the [Common Lisp HyperSpec](http://clhs.lisp.se/Body/02_b.htm)
     pub fn read(&mut self) -> Result<Form, ()> {
         macro_rules! ret_err {
             ($e:expr) => {{
@@ -316,16 +318,15 @@ impl Default for MacroTable {
 
 impl Debug for CharSyntaxType {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f,
-               "{}",
-               match *self {
-                   MacroChar(t) => format!("{:?}inatingMacro", t),
-                   Invalid => "Invalid".to_owned(),
-                   Whitespace => "Whitespace".to_owned(),
-                   SingleEscape => "SingleEscape".to_owned(),
-                   MultEscape => "MultEscape".to_owned(),
-                   TokenChar => "Token".to_owned(),
-               })
+        let s = match *self {
+            MacroChar(t) => format!("{:?}inatingMacro", t),
+            Invalid => "Invalid".to_owned(),
+            Whitespace => "Whitespace".to_owned(),
+            SingleEscape => "SingleEscape".to_owned(),
+            MultEscape => "MultEscape".to_owned(),
+            TokenChar => "Token".to_owned(),
+        };
+        write!(f, "{}", s)
     }
 }
 

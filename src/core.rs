@@ -12,7 +12,7 @@ use super::Args;
 pub fn line_comment_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
     loop {
         match reader.stream.next() {
-            Some(c) if c == b'\n' => break,
+            Some(b'\n') => break,
             Some(_) => {}
             _ => break,
         }
