@@ -1,1 +1,15 @@
 langauge: rust
+rust:
+  - nightly
+  - beta
+  - stable
+script:
+  - if [[ $TRAVIS_RUST_VERSION = niightly* ]]; then
+      cargo test --verbose --features clippy
+    else
+      cargo test --verbose
+    fi
+
+matrix:
+  allow_failures:
+    - rust: nightly
