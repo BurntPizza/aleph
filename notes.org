@@ -1,16 +1,17 @@
 #+TITLE: Notes
 #+OPTIONS: num:nil
 
+
 * Major features
 ** Reader
-   Consumes a text stream, produces a form.\\
-   
-   
+   Consumes a text stream, produces a form. 
 *** Reader macros   
 
-*** TODO Forms
-Untyped syntax tree, essentially.\\
-Need to figure out what the fundamental variants here are.\\
+*** Forms
+Untyped syntax tree, essentially.
+
+Need to figure out what the fundamental variants here are.
+
 Forms should provide span information, for compiler messages.
 
 Possibly / Probably:
@@ -30,47 +31,41 @@ Clojure's model:
 *** Macros
   
 *** Analyzer
-Takes in a form, produces a typed AST.\\
+Takes in a form, produces a typed AST.
+
 Wait, do macros need to be type checked before expansion? (probably, right?)
 
 *** AST
    
 ** Type system
-  
+*** Kinds of type constructors
+Forms a [[https://en.wikipedia.org/wiki/Regular_language][regular langauge]] of types.
+**** *Nullary*
+  Language primitives, the base alphabet \Sigma of the 
+  type langauge, the terminal symbols of it's grammar.
 
-*** Numbers
+  The user cannot create new types of this family.
+**** *Unary*
+  - Kleen Star
+**** *N-ary*
+  - Sum
+  - Product
+*** Types of types
+Form concrete strings in the type language.
 
-Use type-level integers?\\
-Could also then have Rational<N>\\
-What about range types? E.g. from Ada?\\
+(TODO: thus the Kleen star is not present, correct?)
+**** Primitive
+**** Record
+**** Union
 
-- Fixed types
-
-| *i8*  |
-| *i16* |
-| *i32* |
-| *i64* |
-|-------|
-| *u8*  |
-| *u16* |
-| *u32* |
-| *u64* |
-|-------|
-| *f32* |
-| *f64* |
-
-- Auto-promoting types
-  
-| *int*  | Arbitrary size integer     |
-| *real* | Arbitrary size real number |
-      
 ** Things to think about
 *** Macros vs. Compiler Macros (interception)
 
 *** Effects
 Including parametricity over effects
 *** Default arguments, default types
-Types: (rust-y syntax) Result<T, E = Error>\\
+Types: (rust-y syntax) Result<T, E = Error>
+
 Creates Result<T> and Result<T, E>
 *** Typed macros
 How do they work? How do they interact with other features?
@@ -96,10 +91,11 @@ Start laying out a high-level design
 * Glossary
 
 - form :: (needs revision)
-         A list, identifier, or a number.\\
-         What else? Is this a bounded category?\\
-         Is there a 'generalized object' type of form?
+         A list, identifier, or a number.
 
+         What else? Is this a bounded category?
+
+         Is there a 'generalized object' type of form?
 - read :: Function that deserializes an object/form from a text stream.
 - eval :: Evalutates an object/form.
    
