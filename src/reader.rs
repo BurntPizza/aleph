@@ -7,7 +7,7 @@ use std::fmt::{self, Display, Debug, Formatter};
 use itertools::*;
 
 use core;
-use form::Form;
+use repr::Form;
 use super::InputStream;
 
 use self::CharSyntaxType::*;

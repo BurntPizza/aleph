@@ -5,7 +5,7 @@ use itertools::*;
 
 use reader::{ReaderContext, ReadError};
 use reader::CharSyntaxType::*;
-use form::Form;
+use repr::Form;
 use super::Args;
 
 /// Reader macro function for line comments.

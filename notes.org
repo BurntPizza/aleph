@@ -58,7 +58,19 @@ Form concrete strings in the type language.
 **** Record
 **** Union
 
+*** Inference
+Global (+ some boundaries? At least by convention?).
+
+Need to work out unification rules for axiomatic constructs.
+Pay attention to hazards outlined [[https://www.cs.cmu.edu/~rwh/introsml/core/typeinf.htm][here]]. (find better/more resources)
 ** Things to think about
+Use fibers/coroutines when evaulating arbitrary (non-totality checked) 
+code at compile time, such as reader macros, EPEG rewriters, constant functions, etc.
+That keeps any non-terminating code from blocking the compiler, and doesn't require 
+bailing out at an arbitrary timeout. Perhaps have some kind of ease-off (like in CAS loops)
+for when computations start taking too long, as it's more likely they won't terminate and 
+we want to waste as little time as possible. Perhaps have a priority order for incremental
+computations that are making progress vs. ones that aren't making observable progress.
 *** Macros vs. Compiler Macros (interception)
 
 *** Effects
@@ -85,6 +97,22 @@ Start laying out a high-level design
 
 
 **** Namespaces
+
+
+** Server
+
+*** Functions
+**** exposed to client
+- new-session :: Begins a new session.
+  Server returns session token?
+
+***** Protocol
+Header
+|---------+----------|
+| request | response |
+| format  | format   |
+|---------+----------|
+| u8      | u8       |
 
 
 

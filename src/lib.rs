@@ -12,10 +12,10 @@ use std::collections::BTreeMap;
 extern crate itertools;
 
 pub mod core;
-pub mod form;
+pub mod repr;
 pub mod reader;
 
-use form::Form;
+use repr::Form;
 
 pub type Args<'a> = &'a [Form];
 pub type Function = fn(Args) -> Result<Form, String>;

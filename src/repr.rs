@@ -1,8 +1,4 @@
 
-//! Module for representing and manipulating programs in lexical form.
-//!
-//! *Should probably be a submodule of some kind of 'repr' module.*
-
 
 use std::fmt::{self, Display, Formatter};
 use std::collections::VecDeque;
