@@ -50,3 +50,40 @@ impl Display for Form {
         write!(f, "{}", s)
     }
 }
+
+
+// AST node types for each special form, right? see wiki diagram for AST
+// some nodes contain type info (or at least slots for it)
+// a Form -> AST fn
+// do modules go in the AST?
+enum Ast {
+    // Special Forms
+    Def,
+    Quote,
+    Fn,
+    Macro,
+    Cond,
+    //? Let,
+    
+}
+
+
+// constraint graph? each edge has a vector of contraints relating to the nodes it connects?
+// might need to be a hypergraph...
+
+
+// also Identifier vs Literal vs FnCall
+// Literals map to FnCalls? (macros?) (compiler macros?)
+
+
+// so what are the special forms?
+
+/*
+
+environment:
+Reader env.
+Analyzer env.
+
+
+
+*/
