@@ -10,10 +10,12 @@
 use std::collections::BTreeMap;
 
 extern crate itertools;
+extern crate hamt;
 
 pub mod core;
 pub mod repr;
 pub mod reader;
+pub mod analyzer;
 
 use repr::Form;
 

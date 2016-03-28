@@ -10,6 +10,11 @@ Keeps track of:
   - Reader Macros
   - Readtable
 ** TODO Analyzer Environment
+Keeps track of:
+- Analyzer state:
+  - Identifer bindings
+  - Import paths (do when needed)
+  - Errors
 
 
 * Major features
