@@ -1,6 +1,16 @@
 #+TITLE: Notes
 #+OPTIONS: num:nil
 
+* Todos
+** TODO Reader Environment
+Keeps track of:
+- Reader state:
+  - Position
+  - Errors
+  - Reader Macros
+  - Readtable
+** TODO Analyzer Environment
+
 
 * Major features
 ** Reader
@@ -126,7 +136,10 @@ Header
          Is there a 'generalized object' type of form?
 - read :: Function that deserializes an object/form from a text stream.
 - eval :: Evalutates an object/form.
-   
+
+
+* General notes
+- Be able to pass a closure to ~assert~ to do something other than panic on failure   
 
 
 * Library ideas
@@ -155,8 +168,19 @@ Polymorphic on host markup language?
 ** async/await
 ** whole alternate syntaxes (and conversions to/from?)
 -----
-** KWargs as a macro?? 
+** macros 
+- KWargs :: 
+#+BEGIN_SRC clojure
 (kw the-func map-or-struct-or-arg-pairs)
+#+END_SRC
+- ~where~ clause :: Desugars to a ~let~.
+                  /(would have to be a reader macro, no?)/
+#+BEGIN_SRC clojure
+(+ a b c
+  where a 3
+        b 2
+        c (* a b))
+#+END_SRC
 ** macros to copy-with-modification existing code
 - Add/change variants to type
 - similar with namespaces
@@ -170,3 +194,6 @@ Include incorporation of formatting info? (e.g. [color, style] spans?)
 - tables
 - graphs
 - 
+** Additive graph-based flowchart knowledgebase
+Ask user a question at each node, their answer directs them to a child.
+New answers can be added to the graph.
