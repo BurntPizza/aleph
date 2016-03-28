@@ -382,3 +382,16 @@ impl Display for ReadError {
         write!(f, "{}", self.desc)
     }
 }
+
+
+#[cfg(test)]
+mod test {
+    use reader;
+
+    #[test]
+    fn test_read_all() {
+        let input = "hello world".to_owned();
+        let output = "(hello world)";
+        assert_eq!(reader::read_all(input).unwrap().to_string(), output);
+    }
+}

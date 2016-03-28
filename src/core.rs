@@ -57,3 +57,30 @@ pub fn println(s: Args) -> Result<Form, String> {
     println!("{}", s.iter().join(" "));
     Ok(Form::empty_list())
 }
+
+
+#[cfg(test)]
+mod test {
+    use super::super::reader;
+
+    #[test]
+    fn test_line_comment_reader() {
+        let input = "; hello\nworld".to_owned();
+        let output = "world";
+        assert_eq!(reader::read_string(input).unwrap().to_string(), output);
+    }
+
+    #[test]
+    fn test_left_paren_reader() {
+        let input = "(hello world)".to_owned();
+        let output = input.clone();
+        assert_eq!(reader::read_string(input).unwrap().to_string(), output);
+    }
+
+    #[test]
+    fn test_right_paren_reader() {
+        let input = ")".to_owned();
+        let output = "Error: Unexpected right parenthesis\n";
+        assert_eq!(reader::read_string(input).err().unwrap(), output);
+    }
+}
