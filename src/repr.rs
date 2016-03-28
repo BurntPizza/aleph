@@ -31,6 +31,14 @@ impl Form {
     pub fn empty_list() -> Self {
         List(VecDeque::new())
     }
+
+
+    pub fn add_to_list(&mut self, item: Form) {
+        match *self {
+            Atom(_) => panic!(),
+            List(ref mut l) => l.push_back(item)
+        }
+    }
 }
 
 impl Display for Form {

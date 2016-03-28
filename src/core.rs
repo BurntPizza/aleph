@@ -3,13 +3,13 @@
 
 use itertools::*;
 
-use reader::{ReaderContext, ReadError};
+use reader::{ReaderEnv, ReadError};
 use reader::CharSyntaxType::*;
 use repr::Form;
 use super::Args;
 
 /// Reader macro function for line comments.
-pub fn line_comment_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
+pub fn line_comment_reader(reader: &mut ReaderEnv, _: u8) -> Result<Option<Form>, ()> {
     loop {
         match reader.stream.next() {
             Some(b'\n') | None => break,
@@ -20,7 +20,7 @@ pub fn line_comment_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<F
 }
 
 /// Reader macro function for reading list s-expressions delimited by parentheses.
-pub fn left_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
+pub fn left_paren_reader(reader: &mut ReaderEnv, _: u8) -> Result<Option<Form>, ()> {
     let mut list = vec![];
 
     loop {
@@ -29,7 +29,7 @@ pub fn left_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<For
             Some(c) if c == b')' => return Ok(Some(Form::list(list))),
             Some(_) => {
                 reader.stream.unread();
-                list.push(try!(reader.read()));
+                list.push(try!(reader.read_token()));
             }
             _ => {
                 // TODO format!("Unexpected end of stream while reading list: `{:?}`", list)
@@ -41,7 +41,7 @@ pub fn left_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<For
 }
 
 /// Reader macro function to abort on unexpected closing parentheses.
-pub fn right_paren_reader(reader: &mut ReaderContext, _: u8) -> Result<Option<Form>, ()> {
+pub fn right_paren_reader(reader: &mut ReaderEnv, _: u8) -> Result<Option<Form>, ()> {
     reader.output.push(ReadError::other("Unexpected right parenthesis"));
     Err(())
 }

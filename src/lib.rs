@@ -35,6 +35,7 @@ impl Default for Environment {
     }
 }
 
+
 /// eval() placeholder
 pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
     match input {
@@ -65,7 +66,7 @@ pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
 
 
 // Note: guaranteed to be ASCII
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct InputStream {
     src: String,
     idx: usize,

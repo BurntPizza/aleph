@@ -16,10 +16,10 @@ use self::ReaderState::*;
 use self::ReadErrorType::*;
 
 /// The type of functions implementing reader macros
-pub type MacroFunction = fn(&mut ReaderContext, u8) -> Result<Option<Form>, ()>;
+pub type MacroFunction = fn(&mut ReaderEnv, u8) -> Result<Option<Form>, ()>;
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum ReadErrorType {
     EOS,
     EmptyToken, // merge these?
@@ -40,7 +40,7 @@ pub struct ReadError {
 // note: chars do not need to track their position for now, recover that info from InputStream
 // this also should have to public
 // merge into Environment?
-pub struct ReaderContext {
+pub struct ReaderEnv {
     pub stream: InputStream,
     pub readtable: ReadTable,
     pub macros: MacroTable,
@@ -84,17 +84,22 @@ enum ReaderState {
     TokenFinished,
 }
 
+// read all of a string
+pub fn read_all(src: String) -> Result<Form, String> {
+    let mut reader = ReaderEnv::new_default(InputStream::new(src));
+
+    match reader.read_all() {
+        Ok(form) => Ok(form),
+        Err(_) => Err(reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
+    }
+}
+
 // TODO: move readtables etc. out to Environment, right?
 /// Read a Form from a String
 pub fn read_string(src: String) -> Result<Form, String> {
     // TODO DI
-    let mut reader = ReaderContext {
-        stream: InputStream::new(src),
-        readtable: ReadTable::default(),
-        macros: MacroTable::default(),
-        output: vec![],
-    };
-    reader.read().map_err(|_| reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
+    let mut reader = ReaderEnv::new_default(InputStream::new(src));
+    reader.read_token().map_err(|_| reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
 }
 
 
@@ -138,9 +143,37 @@ impl ReadError {
 }
 
 
-impl ReaderContext {
+impl ReaderEnv {
+    pub fn new_default(src: InputStream) -> Self {
+        ReaderEnv {
+            stream: src,
+            readtable: ReadTable::default(),
+            macros: MacroTable::default(),
+            output: vec![],
+        }
+    }
+
+    pub fn read_all(&mut self) -> Result<Form, ()> {
+        let mut results = Form::empty_list();
+
+        loop {
+            match self.read_token() {
+                Ok(form) => results.add_to_list(form),
+                Err(_) => {
+                    let error_type = self.output.last().unwrap().type_.clone();
+
+                    if error_type == ReadErrorType::EOS ||
+                       (error_type == ReadErrorType::EmptyToken && self.stream.next().is_none()) {
+                        return Ok(results);
+                    }
+                    return Err(());
+                }
+            }
+        }
+    }
+
     /// Ported from the [Common Lisp HyperSpec](http://clhs.lisp.se/Body/02_b.htm)
-    pub fn read(&mut self) -> Result<Form, ()> {
+    pub fn read_token(&mut self) -> Result<Form, ()> {
         macro_rules! ret_err {
             ($e:expr) => {{
                 self.output.push($e);
@@ -323,7 +356,7 @@ impl Debug for ReadTable {
 impl Default for MacroTable {
     fn default() -> Self {
         let mut mt: HashMap<u8, MacroFunction> = HashMap::new();
-        mt.insert(b'\n', core::line_comment_reader);
+        mt.insert(b';', core::line_comment_reader);
         mt.insert(b'(', core::left_paren_reader);
         mt.insert(b')', core::right_paren_reader);
         MacroTable(mt)
