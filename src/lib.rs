@@ -1,7 +1,6 @@
 
 //! The Aleph Programming Langauge
 
-
 #![cfg_attr(feature="clippy", feature(plugin))]
 #![cfg_attr(feature="clippy", plugin(clippy))]
 #![cfg_attr(not(feature="clippy"), allow(unknown_lints))]
@@ -16,88 +15,9 @@ pub mod core;
 pub mod repr;
 pub mod reader;
 pub mod analyzer;
+pub mod interpreter;
 
 use repr::Form;
-
-
-pub struct Interpreter;
-
-impl Interpreter {
-    // signature?
-    pub fn interpret<S: AsRef<str>>(input: S) {
-
-        use std::fmt;
-        use std::error;
-
-        use repr::Ast;
-
-        type Err = Box<error::Error>;
-
-        trait Exec {
-            fn exec(&self) -> Result<(), Err>;
-        }
-
-        #[derive(Debug)]
-        enum Error {
-
-        }
-
-        impl fmt::Display for Error {
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                unimplemented!()
-            }
-        }
-
-        impl error::Error for Error {
-            fn description(&self) -> &str {
-                unimplemented!()
-            }
-        }
-
-
-        fn read(input: &str) -> Result<Form, Err> {
-            unimplemented!()
-        }
-
-        fn analyze(input: Form) -> Result<Ast, Err> {
-            unimplemented!()
-        }
-
-        type TypedAst = (); // TODO
-        type Bytecode = usize; // TODO
-
-        fn typecheck(input: Ast) -> Result<TypedAst, Err> {
-            unimplemented!()
-        }
-
-        fn compile(input: TypedAst) -> Result<Bytecode, Err> {
-            unimplemented!()
-        }
-
-        fn exec<T: Exec>(input: T) -> Result<(), Err> {
-            input.exec()
-        }
-
-        
-        impl Exec for TypedAst {
-            fn exec(&self) -> Result<(), Err> {
-                unimplemented!()
-            }
-        }
-        impl Exec for Bytecode {
-            fn exec(&self) -> Result<(), Err> {
-                unimplemented!()
-            }
-        }
-
-        read(input.as_ref())
-            .and_then(analyze)
-            .and_then(typecheck)
-         //   .and_then(compile)
-            .and_then(exec)
-            .unwrap();
-    }
-}
 
 pub type Args<'a> = &'a [Form];
 pub type Function = fn(Args) -> Result<Form, String>;

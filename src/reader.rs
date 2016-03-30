@@ -31,7 +31,7 @@ pub struct Span {
 impl Span {
     fn new(text: String) -> Self {
         // TODO: default
-        Span { text: text, ..Default::default() }
+        Span { text: text }
     }
 }
 
@@ -47,7 +47,7 @@ pub enum ReadErrorType {
 }
 
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct ReadError {
     type_: ReadErrorType,
     desc: String,
@@ -139,6 +139,12 @@ impl From<ReadErrorType> for ReadError {
     }
 }
 
+impl ::std::error::Error for ReadError {
+    fn description(&self) -> &str {
+        &*self.desc
+    }
+}
+
 impl ReadError {
     pub fn eos() -> Self {
         ReadErrorType::EOS.into()
@@ -171,13 +177,17 @@ impl ReaderEnv {
         }
     }
 
+    pub fn last_error(&self) -> ReadError {
+        self.output.last().unwrap().clone()
+    }
+
     pub fn read_all(&mut self) -> Result<Form, ()> {
         let mut results = Form::empty_list();
 
         loop {
             match self.read_token() {
                 Ok(form) => results.add_to_list(form),
-                Err(_) => {
+                _ => {
                     let error_type = self.output.last().unwrap().type_.clone();
 
                     if error_type == ReadErrorType::EOS ||

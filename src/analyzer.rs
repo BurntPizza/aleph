@@ -4,16 +4,19 @@ use itertools::*;
 
 use super::repr::{Form, Ast};
 
-pub fn analyze_from_root(form: Form) -> Result<Ast, String> {
-    analyze_in_env(form, &mut AnalyzerEnv::root()).map_err(|e| format!("Error: {:?}", e))
+pub fn analyze_from_root(form: Form) -> Result<Ast, AnalyzerError> {
+    analyze_in_env(form, &mut AnalyzerEnv::root())
 }
 
-fn analyze_in_env<'s>(form: Form, env: &mut AnalyzerEnv<'s>) -> Result<Ast, AnalyzerError> {
+fn analyze_in_env(form: Form, env: &mut AnalyzerEnv) -> Result<Ast, AnalyzerError> {
     match form {
         Form::Atom(s) => {
             env.current_scope
                .get_binding(&s.text)
-               .map_or(Err(AnalyzerError::UndefinedIdent(s.text)), |&b| unimplemented!()) // TODO:
+               .map_or(Err(AnalyzerError::UndefinedIdent(s.text)), |&binding| {
+                   //TODO
+                   unimplemented!()
+               })
         }
         Form::List(v) => {
             v.into_iter()
@@ -72,6 +75,19 @@ impl<'p> ScopeEnv<'p> {
 #[derive(Debug)]
 pub enum AnalyzerError {
     UndefinedIdent(String),
+}
+
+impl ::std::fmt::Display for AnalyzerError {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        // TODO
+        write!(f, "{:?}", self)
+    }
+}
+
+impl ::std::error::Error for AnalyzerError {
+    fn description(&self) -> &str {
+        unimplemented!()
+    }
 }
 
 // TODO
