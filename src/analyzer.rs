@@ -1,10 +1,40 @@
 
 use hamt;
+use itertools::*;
 
+use super::repr::{Form, Ast};
+
+pub fn analyze_from_root(form: Form) -> Result<Ast, String> {
+    analyze_in_env(form, &mut AnalyzerEnv::root()).map_err(|e| format!("Error: {:?}", e))
+}
+
+fn analyze_in_env<'s>(form: Form, env: &mut AnalyzerEnv<'s>) -> Result<Ast, AnalyzerError> {
+    match form {
+        Form::Atom(s) => {
+            env.current_scope
+               .get_binding(&s)
+               .map_or(Err(AnalyzerError::UndefinedIdent(s)), |&b| unimplemented!()) // TODO:
+        }
+        Form::List(v) => {
+            v.into_iter()
+             .map(|form| analyze_in_env(form, env))
+             .fold_results(Ast::list_of(vec![]), |acc, ast| acc.list_plus(ast))
+        }
+    }
+}
 
 pub struct AnalyzerEnv<'s> {
     pub current_scope: ScopeEnv<'s>,
     pub errors: Vec<AnalyzerError>,
+}
+
+impl<'s> AnalyzerEnv<'s> {
+    pub fn root() -> Self {
+        AnalyzerEnv {
+            current_scope: ScopeEnv::root(),
+            errors: vec![],
+        }
+    }
 }
 
 pub struct ScopeEnv<'p> {
@@ -39,12 +69,14 @@ impl<'p> ScopeEnv<'p> {
     }
 }
 
+#[derive(Debug)]
 pub enum AnalyzerError {
-    
+    UndefinedIdent(String),
 }
 
 // TODO
 pub type Binding = usize;
+
 
 pub type BindKey = String;
 type Bindings = hamt::HamtMap<BindKey, Binding>;

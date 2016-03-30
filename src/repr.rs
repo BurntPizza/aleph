@@ -56,34 +56,81 @@ impl Display for Form {
 // some nodes contain type info (or at least slots for it)
 // a Form -> AST fn
 // do modules go in the AST?
-enum Ast {
-    // Special Forms
-    Def,
-    Quote,
-    Fn,
-    Macro,
-    Cond,
-    //? Let,
-    
+
+// pub enum Ast {
+//     // Special Forms
+//     Def,
+//     Quote,
+//     Fn,
+//     Macro,
+//     Cond,
+
+//     List(VecDeque<Ast>),
+// }
+
+#[derive(Debug)]
+pub enum Ast {
+    Atom(Val),
+    Invoke(Vec<Ast>),
 }
 
+pub enum Type {
+    T_,
+}
 
-// constraint graph? each edge has a vector of contraints relating to the nodes it connects?
-// might need to be a hypergraph...
+// Index into global interpreter datastore
+// (I think)
+#[derive(PartialEq, Debug)]
+pub struct Val(u64);
 
+pub const NULL_VAL: Val = Val(0);
 
-// also Identifier vs Literal vs FnCall
-// Literals map to FnCalls? (macros?) (compiler macros?)
+impl Ast {
+    // Constructors:
 
+    pub fn atom(v: Val) -> Self {
+        Ast::Atom(v)
+    }
 
-// so what are the special forms?
+    pub fn invoke<I: IntoIterator<Item = Ast>>(itr: I) -> Self {
+        Ast::Invoke(itr.into_iter().collect())
+    }
 
-/*
+    // Utilities:
 
-environment:
-Reader env.
-Analyzer env.
+    pub fn get_val_id(&self) -> &Val {
+        match *self {
+            Ast::Atom(ref val) => val,
+            _ => self.is_not("an Atom"),
+        }
+    }
 
+    pub fn list_of<I: IntoIterator<Item = Ast>>(itr: I) -> Self {
+        use self::Ast::*;
 
+        Invoke(::std::iter::once(Atom(// get_val_id!(core::list)
+                                      unimplemented!()))
+                   .chain(itr.into_iter())
+                   .collect())
+    }
 
-*/
+    pub fn add_to_list(&mut self, item: Ast) {
+        use self::Ast::*;
+
+        match *self {
+            Invoke(ref mut v) if *v.get(0).map_or(&NULL_VAL, Ast::get_val_id) ==
+                                 *Ast::get_val_id(// core::list
+                                                  unimplemented!()) => v.push(item),
+            _ => self.is_not("a list"),
+        }
+    }
+
+    pub fn list_plus(mut self, item: Ast) -> Self {
+        self.add_to_list(item);
+        self
+    }
+
+    fn is_not<S: AsRef<str>>(&self, msg: S) -> ! {
+        panic!("{:?} is not {}!", self, msg.as_ref())
+    }
+}

@@ -15,6 +15,7 @@ Keeps track of:
   - Identifer bindings
   - Import paths (do when needed)
   - Errors
+** TODO analyze()
 
 
 * Major features
