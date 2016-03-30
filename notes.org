@@ -16,7 +16,10 @@ Keeps track of:
   - Import paths (do when needed)
   - Errors
 ** TODO analyze()
-
+** TODO get rid of string cloning at some point
+- 1st upgrade: Rc<str>
+- 2nd: Cow<str> or custom indexing (no lifetimes required, I think)
+** TODO Bytecode
 
 * Major features
 ** Reader
