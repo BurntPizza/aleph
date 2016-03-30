@@ -22,6 +22,7 @@ pub type MacroFunction = fn(&mut ReaderEnv, u8) -> Result<Option<Form>, ()>;
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Span {
     pub text: String,
+    // instead refer to ReaderEnv? Interpreter?
     // file: String,
     // line: u32,
     // col: u32,
