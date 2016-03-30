@@ -5,19 +5,20 @@ use std::fmt::{self, Display, Formatter};
 use itertools::*;
 
 use self::Form::*;
+use reader::Span;
 
 /// Lexical program representation: untyped s-expressions.
 #[derive(Debug, PartialEq, Clone)]
 pub enum Form {
     /// A token, such as an identifier, number, or anything that isn't a `List`.
-    Atom(String),
+    Atom(Span),
     /// A list of `Form`s, usually delimited by parentheses.
     List(Vec<Form>),
 }
 
 impl Form {
     /// Construct an Atom containing a String
-    pub fn atom(s: String) -> Self {
+    pub fn atom(s: Span) -> Self {
         Atom(s)
     }
     /// Construct a list of forms
@@ -43,7 +44,7 @@ impl Form {
 impl Display for Form {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let s = match *self {
-            Atom(ref s) => s.clone(),
+            Atom(ref s) => s.text.clone(),
             List(ref list) => format!("({})", list.iter().join(" ")),
         };
         write!(f, "{}", s)

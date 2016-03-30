@@ -47,14 +47,14 @@ pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
             let (name, args) = v.split_at(1);
             
             if let Form::Atom(ref s) = name[0] {
-                match env.table.get(s) {
+                match env.table.get(&s.text) {
                     Some(f) => {
                         match f(args) {
                             Ok(form) => Ok(form),
                             Err(s) => Err(s),
                         }
                     }
-                    None => Err(format!("No such function: `{}`", s)),
+                    None => Err(format!("No such function: `{}`", s.text)),
                 }
             } else {
                 panic!("first elem isn't an Atom: {:?}", &v[..]);
@@ -69,7 +69,7 @@ pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
 #[derive(Debug, Clone)]
 pub struct InputStream {
     src: String,
-    idx: usize,
+    idx: usize
 }
 
 impl InputStream {

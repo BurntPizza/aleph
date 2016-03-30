@@ -19,6 +19,22 @@ use self::ReadErrorType::*;
 pub type MacroFunction = fn(&mut ReaderEnv, u8) -> Result<Option<Form>, ()>;
 
 
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct Span {
+    pub text: String,
+    // file: String,
+    // line: u32,
+    // col: u32,
+}
+
+impl Span {
+    fn new(text: String) -> Self {
+        // TODO: default
+        Span { text: text, ..Default::default() }
+    }
+}
+
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum ReadErrorType {
     EOS,
@@ -90,7 +106,7 @@ pub fn read_all(src: String) -> Result<Form, String> {
 
     match reader.read_all() {
         Ok(form) => Ok(form),
-        Err(_) => Err(reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
+        Err(_) => Err(reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n")),
     }
 }
 
@@ -99,7 +115,8 @@ pub fn read_all(src: String) -> Result<Form, String> {
 pub fn read_string(src: String) -> Result<Form, String> {
     // TODO DI
     let mut reader = ReaderEnv::new_default(InputStream::new(src));
-    reader.read_token().map_err(|_| reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
+    reader.read_token()
+          .map_err(|_| reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
 }
 
 
@@ -301,7 +318,7 @@ impl ReaderEnv {
                 }
                 // step 10
                 TokenFinished => {
-                    return Ok(Form::atom(String::from_utf8_lossy(&*token).into_owned()))
+                    return Ok(Form::atom(Span::new(String::from_utf8_lossy(&*token).into_owned())))
                 }
             }
         }

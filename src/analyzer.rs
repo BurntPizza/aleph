@@ -12,8 +12,8 @@ fn analyze_in_env<'s>(form: Form, env: &mut AnalyzerEnv<'s>) -> Result<Ast, Anal
     match form {
         Form::Atom(s) => {
             env.current_scope
-               .get_binding(&s)
-               .map_or(Err(AnalyzerError::UndefinedIdent(s)), |&b| unimplemented!()) // TODO:
+               .get_binding(&s.text)
+               .map_or(Err(AnalyzerError::UndefinedIdent(s.text)), |&b| unimplemented!()) // TODO:
         }
         Form::List(v) => {
             v.into_iter()
