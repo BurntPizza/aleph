@@ -44,11 +44,9 @@ pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
         Form::Atom(_) => Ok(input),
         Form::List(ref v) if v.is_empty() => Ok(Form::empty_list()),
         Form::List(ref v) => {
-            let elems = v.as_slices().0;
-            let name = &elems[0];
-            let args = &elems[1..];
-
-            if let Form::Atom(ref s) = *name {
+            let (name, args) = v.split_at(1);
+            
+            if let Form::Atom(ref s) = name[0] {
                 match env.table.get(s) {
                     Some(f) => {
                         match f(args) {
@@ -59,7 +57,7 @@ pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
                     None => Err(format!("No such function: `{}`", s)),
                 }
             } else {
-                panic!("first elem isn't an Atom: {:?}", elems);
+                panic!("first elem isn't an Atom: {:?}", &v[..]);
             }
         }
     }

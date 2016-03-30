@@ -1,7 +1,6 @@
 
 
 use std::fmt::{self, Display, Formatter};
-use std::collections::VecDeque;
 
 use itertools::*;
 
@@ -13,7 +12,7 @@ pub enum Form {
     /// A token, such as an identifier, number, or anything that isn't a `List`.
     Atom(String),
     /// A list of `Form`s, usually delimited by parentheses.
-    List(VecDeque<Form>),
+    List(Vec<Form>),
 }
 
 impl Form {
@@ -29,14 +28,14 @@ impl Form {
     }
     /// Construct a List form containing nothing
     pub fn empty_list() -> Self {
-        List(VecDeque::new())
+        List(vec![])
     }
 
 
     pub fn add_to_list(&mut self, item: Form) {
         match *self {
             Atom(_) => panic!(),
-            List(ref mut l) => l.push_back(item)
+            List(ref mut l) => l.push(item),
         }
     }
 }
