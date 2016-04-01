@@ -19,7 +19,6 @@ use clap::{App, AppSettings, SubCommand};
 use std::io::prelude::*;
 
 
-
 fn main() {
     let version = option_env!("CARGO_PKG_VERSION").expect("Error: needs to build with Cargo");
 

@@ -71,7 +71,7 @@ impl Display for Form {
 #[derive(Debug)]
 pub enum Ast {
     Atom(Val),
-    Invoke(Vec<Ast>),
+    Invoke(Box<Ast>, Vec<Ast>),
 }
 
 pub enum Type {
@@ -80,10 +80,17 @@ pub enum Type {
 
 // Index into global interpreter datastore
 // (I think)
-#[derive(PartialEq, Debug)]
+#[derive(Copy, Clone, Hash, Eq, PartialEq, Debug)]
 pub struct Val(u64);
 
-pub const NULL_VAL: Val = Val(0);
+impl Val {
+    pub fn new(v: u64) -> Self {
+        Val(v)
+    }
+}
+
+pub const NULL_VAL: Val = Val(0); // VOID_VAL? probably more accurate
+pub const LIST_VAL: Val = Val(1);
 
 impl Ast {
     // Constructors:
@@ -92,8 +99,8 @@ impl Ast {
         Ast::Atom(v)
     }
 
-    pub fn invoke<I: IntoIterator<Item = Ast>>(itr: I) -> Self {
-        Ast::Invoke(itr.into_iter().collect())
+    pub fn invoke<I: IntoIterator<Item = Ast>>(call: Ast, args: I) -> Self {
+        Ast::Invoke(Box::new(call), args.into_iter().collect())
     }
 
     // Utilities:
@@ -106,21 +113,16 @@ impl Ast {
     }
 
     pub fn list_of<I: IntoIterator<Item = Ast>>(itr: I) -> Self {
-        use self::Ast::*;
+        use self::Ast;
 
-        Invoke(::std::iter::once(Atom(// get_val_id!(core::list)
-                                      unimplemented!()))
-                   .chain(itr.into_iter())
-                   .collect())
+        Ast::invoke(Ast::atom(LIST_VAL), itr)
     }
 
     pub fn add_to_list(&mut self, item: Ast) {
         use self::Ast::*;
 
         match *self {
-            Invoke(ref mut v) if *v.get(0).map_or(&NULL_VAL, Ast::get_val_id) ==
-                                 *Ast::get_val_id(// core::list
-                                                  unimplemented!()) => v.push(item),
+            Invoke(ref call, ref mut args) if *call.get_val_id() == LIST_VAL => args.push(item),
             _ => self.is_not("a list"),
         }
     }
