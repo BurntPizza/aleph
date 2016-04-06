@@ -68,6 +68,9 @@ impl Display for Form {
 //     List(VecDeque<Ast>),
 // }
 
+
+// --> ad-hoc enum tree or use Rose Tree crate?
+
 #[derive(Debug)]
 pub enum Ast {
     Atom(Val),

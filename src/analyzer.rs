@@ -3,15 +3,26 @@ use hamt::HamtMap;
 use itertools::*;
 
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
-use super::repr::{Form, Ast};
+use super::repr::Form;
 
-pub fn analyze_from_root<'a>(form: &Form) -> Result<(AnalyzerEnv<'a>, Ast), AnalyzerError> {
-    let mut env = AnalyzerEnv::root();
-    analyze_in_env(form, &mut env).map(|result| (env, result))
+pub fn analyze_from_root(form: &Form) -> Result<Analysis, AnalyzerError> {
+    let mut env = root_symbol_table();
+
+    analyze_in_env(form, &mut env).map(|_| {
+        Analysis {
+            ast: form,
+            symbol_table: env,
+        }
+    })
 }
 
-fn analyze_in_env(form: &Form, env: &mut AnalyzerEnv) -> Result<Ast, AnalyzerError> {
+fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<(), AnalyzerError> {
+
+    unimplemented!()
     // match form {
     //     Form::Atom(s) => {
     //         env.current_scope
@@ -26,11 +37,110 @@ fn analyze_in_env(form: &Form, env: &mut AnalyzerEnv) -> Result<Ast, AnalyzerErr
     //     Form::List(v) => {
     //         v.into_iter()
     //          .map(|form| analyze_in_env(form, env))
-    //          .fold_results(Ast::list_of(vec![]), |acc, ast| acc.list_plus(ast))
+    //          .fold_results(Form::list_of(vec![]), |acc, ast| acc.list_plus(ast))
     //     }
     // }
 }
 
+fn root_symbol_table<'a>() -> SymbolTable<'a> {
+    unimplemented!()
+}
+
+pub struct Analysis<'a> {
+    ast: &'a Form, // correct lifetime?
+    symbol_table: SymbolTable<'a>,
+}
+
+pub type SymK = String;
+pub type SymV = SymbolProps;
+type ScopeTag = usize;
+
+static SCOPE_TAG_COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+
+fn new_scope_tag() -> ScopeTag {
+    SCOPE_TAG_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+pub struct SymbolTable<'p> {
+    parent: Option<&'p SymbolTable<'p>>,
+    scope: ScopeTag,
+    keyed_by_name: HamtMap<SymK, SymV>,
+}
+
+impl<'p> SymbolTable<'p> {
+    pub fn new() -> Self {
+        SymbolTable {
+            parent: None,
+            scope: new_scope_tag(),
+            keyed_by_name: HamtMap::new(),
+        }
+    }
+
+    pub fn push_scope(&'p self) -> Self {
+        SymbolTable {
+            parent: Some(self),
+            scope: new_scope_tag(),
+            keyed_by_name: self.keyed_by_name.clone(),
+        }
+    }
+
+    pub fn num_bindings(&self) -> usize {
+        self.keyed_by_name.len()
+    }
+
+    pub fn add(&mut self, key: SymK, val: SymV) {
+        // not sure I like the need to clone here, at least it's cheap.
+        self.keyed_by_name = self.keyed_by_name.clone().plus(key, val);
+    }
+}
+
+#[derive(Default)]
+pub struct SymbolProps {
+    kind: SymbolKind,
+}
+
+pub enum SymbolKind {
+    Var,
+}
+
+impl Default for SymbolKind {
+    fn default() -> Self {
+        SymbolKind::Var
+    }
+}
+
+#[derive(Debug)]
+pub enum AnalyzerError {
+    UndefinedIdent(String),
+}
+
+impl ::std::fmt::Display for AnalyzerError {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+        // TODO
+        write!(f, "{:?}", self)
+    }
+}
+
+impl ::std::error::Error for AnalyzerError {
+    fn description(&self) -> &str {
+        unimplemented!()
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn symbol_table_add() {
+        let mut table = SymbolTable::new();
+
+        assert_eq!(table.num_bindings(), 0);
+        table.add("".into(), Default::default());
+        assert_eq!(table.num_bindings(), 1);
+    }
+}
 
 // pub struct AnalyzerEnv<'s> {
 //     pub current_scope: ScopeEnv<'s>,
@@ -111,25 +221,6 @@ fn analyze_in_env(form: &Form, env: &mut AnalyzerEnv) -> Result<Ast, AnalyzerErr
 //         unimplemented!()
 //     }
 // }
-
-// #[derive(Debug)]
-// pub enum AnalyzerError {
-//     UndefinedIdent(String),
-// }
-
-// impl ::std::fmt::Display for AnalyzerError {
-//     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-//         // TODO
-//         write!(f, "{:?}", self)
-//     }
-// }
-
-// impl ::std::error::Error for AnalyzerError {
-//     fn description(&self) -> &str {
-//         unimplemented!()
-//     }
-// }
-
 
 
 // // maybe move to core.rs

@@ -1,19 +1,25 @@
 
 use std::error::Error;
 
-use repr::{Form, Ast};
+use repr::Form;
 use reader;
-use analyzer::{self, AnalyzerEnv};
+use analyzer::{self, Analysis};
 
 // TODO: return type
 pub fn interpret<T: Into<String>>(input: T) -> String {
     let input = input.into();
-    read(input)
-        .and_then(analyze)
-//        .and_then(typecheck)
-        .and_then(exec)
-        .unwrap()
-        .to_string()
+    let ast = read(input).unwrap();
+    let analysis = analyze(&ast).unwrap();
+
+    analysis.exec().unwrap()
+
+    //    read(input)
+    //        .and_then(analyze)
+    //        .and_then(typecheck)
+    //        .and_then(compile)
+    //        .and_then(exec)
+    //        .unwrap()
+    //        .to_string()
 }
 
 fn read(input: String) -> Result<Form, Err> {
@@ -21,12 +27,8 @@ fn read(input: String) -> Result<Form, Err> {
     reader.read_all().map_err(|_| reader.last_error().into())
 }
 
-fn analyze<'a>(input: Form) -> Result<(analyzer::AnalyzerEnv<'a>, Ast), Err> {
-    analyzer::analyze_from_root(input).map_err(Into::into)
-}
-
-fn typecheck(input: Ast) -> Result<TypedAst, Err> {
-    unimplemented!()
+fn analyze(input: &Form) -> Result<Analysis, Err> {
+    analyzer::analyze_from_root(&input).map_err(Into::into)
 }
 
 fn compile(input: TypedAst) -> Result<Bytecode, Err> {
@@ -45,10 +47,8 @@ type Bytecode = usize; // TODO
 type ExecResult = Result<String, Err>;
 
 // For testing until typecheck is implemented
-impl<'a> Exec for (AnalyzerEnv<'a>, Ast) {
+impl<'a> Exec for analyzer::Analysis<'a> {
     fn exec(&self) -> ExecResult {
-        let &(ref env, ref ast) = self;
-
         unimplemented!()
     }
 }

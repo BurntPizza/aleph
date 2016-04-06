@@ -148,6 +148,15 @@ Header
 
 
 * General notes
+
+The symbol table primarily facilitatesthe replacement
+of identifiers in the program with a primary key.
+
+http://www.slideshare.net/Tech_MX/symbol-table-design-compiler-construction
+
+AST - lexical; program elements referred to by textual name.
+ASG - "semantic"; program elements referred to by unique key.
+
 - Be able to pass a closure to ~assert~ to do something other than panic on failure   
 
 
