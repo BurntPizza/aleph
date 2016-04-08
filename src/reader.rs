@@ -21,11 +21,10 @@ pub type MacroFunction = fn(&mut ReaderEnv, u8) -> Result<Option<Form>, ()>;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Span {
-    pub text: String,
-    // instead refer to ReaderEnv? Interpreter?
-    // file: String,
-    // line: u32,
-    // col: u32,
+    pub text: String, /* instead refer to ReaderEnv? Interpreter?
+                       * file: String,
+                       * line: u32,
+                       * col: u32, */
 }
 
 impl Span {
@@ -102,11 +101,11 @@ enum ReaderState {
 }
 
 // read all of a string
-pub fn read_all(src: String) -> Result<Form, String> {
+pub fn read_all(src: String) -> Result<Vec<Form>, String> {
     let mut reader = ReaderEnv::new_default(InputStream::new(src));
 
     match reader.read_all() {
-        Ok(form) => Ok(form),
+        Ok(forms) => Ok(forms),
         Err(_) => Err(reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n")),
     }
 }
@@ -181,12 +180,12 @@ impl ReaderEnv {
         self.output.last().unwrap().clone()
     }
 
-    pub fn read_all(&mut self) -> Result<Form, ()> {
-        let mut results = Form::empty_list();
+    pub fn read_all(&mut self) -> Result<Vec<Form>, ()> {
+        let mut results = vec![];
 
         loop {
             match self.read_token() {
-                Ok(form) => results.add_to_list(form),
+                Ok(form) => results.push(form),
                 _ => {
                     let error_type = self.output.last().unwrap().type_.clone();
 
@@ -360,7 +359,7 @@ impl Default for ReadTable {
                            {
                               match c as char {
                                   '(' | ')' | ';' => MacroChar(Terminating),
-                                  '_' | '-' => TokenChar,
+                                  '_' | '-' | '+' => TokenChar,
                                   c if c.is_alphanumeric() => TokenChar,
                                   c if c.is_whitespace() => Whitespace,
                                   _ => Invalid,
@@ -414,12 +413,14 @@ impl Display for ReadError {
 
 #[cfg(test)]
 mod test {
+    use itertools::*;
     use reader;
 
     #[test]
     fn test_read_all() {
         let input = "hello world".to_owned();
-        let output = "(hello world)";
-        assert_eq!(reader::read_all(input).unwrap().to_string(), output);
+        let output = "hello world";
+        assert_eq!(reader::read_all(input).unwrap().iter().map(|f| f.to_string()).join(" "),
+                   output);
     }
 }

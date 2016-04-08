@@ -9,7 +9,7 @@ use analyzer::{self, Analysis};
 pub fn interpret<T: Into<String>>(input: T) -> String {
     let input = input.into();
     let ast = read(input).unwrap();
-    let analysis = analyze(&ast).unwrap();
+    let analysis = analyze(ast).unwrap();
 
     analysis.exec().unwrap()
 
@@ -22,13 +22,13 @@ pub fn interpret<T: Into<String>>(input: T) -> String {
     //        .to_string()
 }
 
-fn read(input: String) -> Result<Form, Err> {
+fn read(input: String) -> Result<Vec<Form>, Err> {
     let mut reader = reader::ReaderEnv::new_default(super::InputStream::new(input));
     reader.read_all().map_err(|_| reader.last_error().into())
-}
 
-fn analyze(input: &Form) -> Result<Analysis, Err> {
-    analyzer::analyze_from_root(&input).map_err(Into::into)
+}
+fn analyze(input: Vec<Form>) -> Result<Analysis, Err> {
+    analyzer::analyze_from_root(input).map_err(Into::into)
 }
 
 fn compile(input: TypedAst) -> Result<Bytecode, Err> {
@@ -47,7 +47,7 @@ type Bytecode = usize; // TODO
 type ExecResult = Result<String, Err>;
 
 // For testing until typecheck is implemented
-impl<'a> Exec for analyzer::Analysis<'a> {
+impl Exec for Analysis {
     fn exec(&self) -> ExecResult {
         unimplemented!()
     }
@@ -78,6 +78,6 @@ mod test {
 
     #[test]
     fn test1() {
-        assert_eq!(interpret("()"), "()");
+        assert_eq!(interpret("(+ 1 2 3)"), "6");
     }
 }

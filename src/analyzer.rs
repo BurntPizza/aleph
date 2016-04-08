@@ -1,54 +1,87 @@
 
+use rose_tree::{self, RoseTree};
 use hamt::HamtMap;
 use itertools::*;
 
-use std::collections::HashMap;
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 
-use super::repr::Form;
+use super::repr::{Form, AstNode};
 
-pub fn analyze_from_root(form: &Form) -> Result<Analysis, AnalyzerError> {
-    let mut env = root_symbol_table();
+pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
+    let mut analysis = Analysis {
+        ast: root_ast(),
+        symbol_table: root_symbol_table(),
+    };
 
-    analyze_in_env(form, &mut env).map(|_| {
-        Analysis {
-            ast: form,
-            symbol_table: env,
+    for form in forms {
+        try!(analyze_in_env(&form,
+                            &mut analysis,
+                            Ix::new(rose_tree::ROOT),
+                            Ix::new(rose_tree::ROOT)));
+    }
+
+    Ok(analysis)
+}
+
+fn analyze_in_env(form: &Form,
+                  analysis: &mut Analysis,
+                  current_ast: Ix,
+                  current_scope: Ix)
+                  -> Result<(), AnalyzerError> {
+
+    let ref mut node = analysis.ast[current_ast];
+    let ref mut scope = analysis.symbol_table[current_scope];
+
+    match *form {
+        // visit and mutate analysis
+        Form::Atom(ref s) => unimplemented!(),
+        Form::List(ref v) => {
+            match v.len() {
+                0 => Err(AnalyzerError::empty_form()),
+                1 => unimplemented!(),
+                _ => {
+                    let ref invocation = v[0];
+                    let args = &v[1..];
+
+                    match *invocation {
+                        Form::Atom(ref span) => {
+                            match scope.lookup(&span.text) {
+                                Some(props) => {
+                                    println!("K: `{}`, V: {:?}", span.text, props);
+                                    Err(unimplemented!())
+                                } 
+                                None => Err(AnalyzerError::UndefinedIdent(span.text.clone())),
+                            }
+                        }
+                        Form::List(ref v) => Err(unimplemented!()),
+                    }
+                }
+            }
         }
-    })
+    }
 }
 
-fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<(), AnalyzerError> {
-
-    unimplemented!()
-    // match form {
-    //     Form::Atom(s) => {
-    //         env.current_scope
-    //            .defined
-    //            .get(&s.text)
-    //             // dunno about this yet
-    //            .map_or(Err(AnalyzerError::UndefinedIdent(s.text)), |&bind_key| {
-    //                // TODO
-    //                unimplemented!()
-    //            })
-    //     }
-    //     Form::List(v) => {
-    //         v.into_iter()
-    //          .map(|form| analyze_in_env(form, env))
-    //          .fold_results(Form::list_of(vec![]), |acc, ast| acc.list_plus(ast))
-    //     }
-    // }
+fn root_ast() -> RoseTree<(AstNode, Ix)> {
+    RoseTree::new((AstNode::Do, Ix::new(rose_tree::ROOT))).0
 }
 
-fn root_symbol_table<'a>() -> SymbolTable<'a> {
-    unimplemented!()
+fn root_symbol_table() -> RoseTree<SymbolTable> {
+    let mut table = SymbolTable::new();
+    // TODO
+    let builtins = vec![("+", Default::default())];
+
+    for kv in builtins {
+        table.add(kv.0.to_owned(), kv.1);
+    }
+
+    RoseTree::new(table).0
 }
 
-pub struct Analysis<'a> {
-    ast: &'a Form, // correct lifetime?
-    symbol_table: SymbolTable<'a>,
+type Ix = rose_tree::NodeIndex;
+
+pub struct Analysis {
+    ast: RoseTree<(AstNode, Ix)>,
+    symbol_table: RoseTree<SymbolTable>,
 }
 
 pub type SymK = String;
@@ -61,24 +94,22 @@ fn new_scope_tag() -> ScopeTag {
     SCOPE_TAG_COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
-pub struct SymbolTable<'p> {
-    parent: Option<&'p SymbolTable<'p>>,
+pub struct SymbolTable {
     scope: ScopeTag,
     keyed_by_name: HamtMap<SymK, SymV>,
 }
 
-impl<'p> SymbolTable<'p> {
+impl SymbolTable {
     pub fn new() -> Self {
         SymbolTable {
-            parent: None,
             scope: new_scope_tag(),
             keyed_by_name: HamtMap::new(),
         }
     }
 
-    pub fn push_scope(&'p self) -> Self {
+    // TODO
+    pub fn push_scope(&self) -> Self {
         SymbolTable {
-            parent: Some(self),
             scope: new_scope_tag(),
             keyed_by_name: self.keyed_by_name.clone(),
         }
@@ -92,13 +123,18 @@ impl<'p> SymbolTable<'p> {
         // not sure I like the need to clone here, at least it's cheap.
         self.keyed_by_name = self.keyed_by_name.clone().plus(key, val);
     }
+
+    pub fn lookup(&self, key: &SymK) -> Option<&SymV> {
+        self.keyed_by_name.find(key)
+    }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SymbolProps {
     kind: SymbolKind,
 }
 
+#[derive(Debug)]
 pub enum SymbolKind {
     Var,
 }
@@ -111,8 +147,16 @@ impl Default for SymbolKind {
 
 #[derive(Debug)]
 pub enum AnalyzerError {
+    EmptyForm,
     UndefinedIdent(String),
 }
+
+impl AnalyzerError {
+    pub fn empty_form() -> Self {
+        AnalyzerError::EmptyForm
+    }
+}
+
 
 impl ::std::fmt::Display for AnalyzerError {
     fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {

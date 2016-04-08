@@ -8,6 +8,7 @@
 
 use std::collections::BTreeMap;
 
+extern crate rose_tree;
 extern crate itertools;
 extern crate hamt;
 

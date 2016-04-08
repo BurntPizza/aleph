@@ -13,6 +13,7 @@ name = "aleph"
 doc = false
 
 [dependencies]
+rose_tree = "0.1.1"
 itertools = "0.4"
 clap = "^2"
 ansi_term = "0.7"
