@@ -1,6 +1,7 @@
 
 
-use repr::{Form, AstNode};
+use repr::AstNode;
+use reader::Form;
 use symbol_table::*;
 
 pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
@@ -98,18 +99,3 @@ impl ::std::error::Error for AnalyzerError {
         unimplemented!()
     }
 }
-
-
-// #[cfg(test)]
-// mod test {
-//     use super::*;
-
-//     #[test]
-//     fn symbol_table_add() {
-//         let mut table = SymbolTable::new();
-
-//         assert_eq!(table.num_bindings(), 0);
-//         table.add("");
-//         assert_eq!(table.num_bindings(), 1);
-//     }
-// }

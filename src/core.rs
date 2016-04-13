@@ -3,9 +3,8 @@
 
 use itertools::*;
 
-use reader::{ReaderEnv, ReadError};
+use reader::{Form, ReaderEnv, ReadError};
 use reader::CharSyntaxType::*;
-use repr::Form;
 use super::Args;
 
 /// Reader macro function for line comments.

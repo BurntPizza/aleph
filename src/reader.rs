@@ -7,7 +7,6 @@ use std::fmt::{self, Display, Debug, Formatter};
 use itertools::*;
 
 use core;
-use repr::Form;
 use super::InputStream;
 
 use self::CharSyntaxType::*;
@@ -21,10 +20,8 @@ pub type MacroFunction = fn(&mut ReaderEnv, u8) -> Result<Option<Form>, ()>;
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Span {
-    pub text: String, /* instead refer to ReaderEnv? Interpreter?
-                       * file: String,
-                       * line: u32,
-                       * col: u32, */
+    // instead refer to ReaderEnv? Interpreter?
+    pub text: String,
 }
 
 impl Span {
@@ -34,6 +31,48 @@ impl Span {
     }
 }
 
+/// Lexical program representation: untyped s-expressions.
+#[derive(Debug, PartialEq, Clone)]
+pub enum Form {
+    /// A token, such as an identifier, number, or anything that isn't a `List`.
+    Atom(Span),
+    /// A list of `Form`s, usually delimited by parentheses.
+    List(Vec<Form>),
+}
+
+impl Form {
+    /// Construct an Atom containing a String
+    pub fn atom(s: Span) -> Self {
+        Form::Atom(s)
+    }
+    /// Construct a list of forms
+    pub fn list<I>(src: I) -> Self
+        where I: IntoIterator<Item = Form>
+    {
+        Form::List(src.into_iter().collect())
+    }
+    /// Construct a List form containing nothing
+    pub fn empty_list() -> Self {
+        Form::List(vec![])
+    }
+
+    pub fn add_to_list(&mut self, item: Form) {
+        match *self {
+            Form::Atom(_) => panic!(),
+            Form::List(ref mut l) => l.push(item),
+        }
+    }
+}
+
+impl Display for Form {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let s = match *self {
+            Form::Atom(ref s) => s.text.clone(),
+            Form::List(ref list) => format!("({})", list.iter().join(" ")),
+        };
+        write!(f, "{}", s)
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum ReadErrorType {

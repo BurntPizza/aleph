@@ -1,8 +1,7 @@
 
 use std::error::Error;
 
-use repr::Form;
-use reader;
+use reader::{self, Form};
 use analyzer::{self, Analysis};
 
 // TODO: return type

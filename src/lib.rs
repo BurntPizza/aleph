@@ -6,14 +6,8 @@
 #![cfg_attr(not(feature="clippy"), allow(unknown_lints))]
 
 
-use std::collections::BTreeMap;
-
-
-extern crate rose_tree;
 extern crate itertools;
 extern crate hamt;
-
-use hamt::HamtMap;
 
 pub mod symbol_table;
 pub mod core;
@@ -22,7 +16,7 @@ pub mod reader;
 pub mod analyzer;
 pub mod interpreter;
 
-use repr::Form;
+use reader::Form;
 
 pub type Args<'a> = &'a [Form];
 pub type Function = fn(Args) -> Result<Form, String>;
