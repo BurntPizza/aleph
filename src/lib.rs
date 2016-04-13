@@ -15,8 +15,3 @@ pub mod repr;
 pub mod reader;
 pub mod analyzer;
 pub mod interpreter;
-
-use reader::Form;
-
-pub type Args<'a> = &'a [Form];
-pub type Function = fn(Args) -> Result<Form, String>;

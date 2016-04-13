@@ -5,7 +5,10 @@ use itertools::*;
 
 use reader::{Form, ReaderEnv, ReadError};
 use reader::CharSyntaxType::*;
-use super::Args;
+
+pub type Args<'a> = &'a [Form];
+pub type Function = fn(Args) -> Result<Form, String>;
+
 
 /// Reader macro function for line comments.
 pub fn line_comment_reader(reader: &mut ReaderEnv, _: u8) -> Result<Option<Form>, ()> {
