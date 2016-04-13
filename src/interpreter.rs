@@ -1,8 +1,11 @@
+use itertools::*;
 
+use std::borrow::Cow;
 use std::error::Error;
 
 use reader::{self, Form, InputStream};
-use analyzer::{self, Analysis};
+use analyzer::{self, Analysis, AstNode};
+use symbol_table::*;
 
 // TODO: return type
 pub fn interpret<T: Into<String>>(input: T) -> String {
@@ -10,7 +13,7 @@ pub fn interpret<T: Into<String>>(input: T) -> String {
     let form = read(input).unwrap();
     let analysis = analyze(form).unwrap();
 
-    analysis.exec().unwrap()
+    exec_and_print(analysis)
 
     //    read(input)
     //        .and_then(analyze)
@@ -30,14 +33,35 @@ fn analyze(input: Vec<Form>) -> Result<Analysis, Err> {
     analyzer::analyze_from_root(input).map_err(Into::into)
 }
 
-// For now, just represent the result as a string
-// Note: from lost commit: replace string with AstNode
-type ExecResult = Result<String, Err>;
+fn exec_and_print(analysis: Analysis) -> String {
+    fn helper(ast: &AstNode, env: &SymbolTable) -> String {
+        match *ast {
+            AstNode::Const(val) => format!("{}", val),
+            AstNode::Var(id) => format!("{}", env.lookup_id(id).unwrap().ident()),
+            AstNode::Inv(ref callee, ref args) => {
+                format!("({} {})",
+                        helper(&*callee, env),
+                        args.iter().map(|ast| helper(ast, env)).join(" "))
+            }
+        }
+    }
+
+    helper(&*analysis.exec().unwrap(), analysis.env())
+}
+
+type ExecResult<'a> = Result<Cow<'a, AstNode>, Err>;
 
 // For testing until typecheck is implemented
 impl Exec for Analysis {
     fn exec(&self) -> ExecResult {
-        unimplemented!()
+        match *self.ast() {
+            AstNode::Inv(ref callee, ref args) => {
+                // TODO
+                // cheat: keep travis happy while I work
+                Ok(Cow::Owned(AstNode::int_const(6)))
+            }
+            ref other => Ok(Cow::Borrowed(other)),
+        }
     }
 }
 

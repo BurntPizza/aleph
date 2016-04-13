@@ -64,6 +64,9 @@ impl Analysis {
         let mut env = SymbolTable::empty();
         env.add_ident("do").unwrap();
 
+        // TODO: should be core, right?
+        env.add_ident("+").unwrap();
+
         let do_id = env.lookup_ident("do")
                        .map(Record::id)
                        .expect("No `do` found in env");
@@ -74,9 +77,17 @@ impl Analysis {
             symbol_table: env,
         }
     }
+
+    pub fn ast(&self) -> &AstNode {
+        &self.ast
+    }
+
+    pub fn env(&self) -> &SymbolTable {
+        &self.symbol_table
+    }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum AstNode {
     // TODO
     Const(i64),
