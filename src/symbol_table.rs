@@ -19,7 +19,9 @@ impl SymbolTable {
         }
     }
 
-    pub fn add_ident(&mut self, ident: String) -> Result<&Record, Box<Error>> {
+    pub fn add_ident<T: Into<String>>(&mut self, ident: T) -> Result<&Record, Box<Error>> {
+        let ident = ident.into();
+
         if let Some(record) = self.lookup_ident(&*ident) {
             let msg = format!("Error adding identifier {} to {:?}, that record already exists: \
                                {:#?}",
@@ -104,33 +106,5 @@ impl Debug for SymbolTable {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use super::SymbolTable;
-
-    #[test]
-    fn pretty_print() {
-        let pp = "SymbolTable:\n\
-                  | id | ident |\n\
-                  |----|-------|\n\
-                  |  0 | hello |\n\
-                  |  1 | world |\n\
-                  |  2 |   how |\n\
-                  |  3 |   are |\n\
-                  |  4 |   you |\n";
-
-        let mut st = SymbolTable::empty();
-
-        for &i in &["hello", "world", "how", "are", "you"] {
-            st.add_ident(i.into()).unwrap();
-        }
-
-        println!("\n{}\n\n", pp);
-        println!("{:?}", st);
-
-        assert_eq!(format!("{:?}", st), pp);
     }
 }

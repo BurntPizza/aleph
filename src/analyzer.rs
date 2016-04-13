@@ -61,7 +61,9 @@ pub struct Analysis {
 
 impl Analysis {
     fn root() -> Self {
-        let env = SymbolTable::empty(); // TODO
+        let mut env = SymbolTable::empty();
+        env.add_ident("do").unwrap();
+
         let do_id = env.lookup_ident("do")
                        .map(Record::id)
                        .expect("No `do` found in env");
