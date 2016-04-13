@@ -8,8 +8,8 @@ use analyzer::{self, Analysis};
 // TODO: return type
 pub fn interpret<T: Into<String>>(input: T) -> String {
     let input = input.into();
-    let ast = read(input).unwrap();
-    let analysis = analyze(ast).unwrap();
+    let form = read(input).unwrap();
+    let analysis = analyze(form).unwrap();
 
     analysis.exec().unwrap()
 

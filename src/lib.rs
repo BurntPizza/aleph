@@ -8,10 +8,14 @@
 
 use std::collections::BTreeMap;
 
+
 extern crate rose_tree;
 extern crate itertools;
 extern crate hamt;
 
+use hamt::HamtMap;
+
+pub mod symbol_table;
 pub mod core;
 pub mod repr;
 pub mod reader;
@@ -24,45 +28,45 @@ pub type Args<'a> = &'a [Form];
 pub type Function = fn(Args) -> Result<Form, String>;
 
 
-pub struct Environment {
-    table: BTreeMap<String, Function>,
-}
+// pub struct Environment {
+//     table: BTreeMap<String, Function>,
+// }
 
-impl Default for Environment {
-    fn default() -> Self {
-        // use include! + macros?
-        let mut table: BTreeMap<String, Function> = BTreeMap::new();
-        table.insert("print".to_owned(), core::print);
-        table.insert("println".to_owned(), core::println);
-        Environment { table: table }
-    }
-}
+// impl Default for Environment {
+//     fn default() -> Self {
+//         // use include! + macros?
+//         let mut table: BTreeMap<String, Function> = BTreeMap::new();
+//         table.insert("print".to_owned(), core::print);
+//         table.insert("println".to_owned(), core::println);
+//         Environment { table: table }
+//     }
+// }
 
 
-/// eval() placeholder
-pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
-    match input {
-        Form::Atom(_) => Ok(input),
-        Form::List(ref v) if v.is_empty() => Ok(Form::empty_list()),
-        Form::List(ref v) => {
-            let (name, args) = v.split_at(1);
+// /// eval() placeholder
+// pub fn tmp_eval(env: &mut Environment, input: Form) -> Result<Form, String> {
+//     match input {
+//         Form::Atom(_) => Ok(input),
+//         Form::List(ref v) if v.is_empty() => Ok(Form::empty_list()),
+//         Form::List(ref v) => {
+//             let (name, args) = v.split_at(1);
 
-            if let Form::Atom(ref s) = name[0] {
-                match env.table.get(&s.text) {
-                    Some(f) => {
-                        match f(args) {
-                            Ok(form) => Ok(form),
-                            Err(s) => Err(s),
-                        }
-                    }
-                    None => Err(format!("No such function: `{}`", s.text)),
-                }
-            } else {
-                panic!("first elem isn't an Atom: {:?}", &v[..]);
-            }
-        }
-    }
-}
+//             if let Form::Atom(ref s) = name[0] {
+//                 match env.table.get(&s.text) {
+//                     Some(f) => {
+//                         match f(args) {
+//                             Ok(form) => Ok(form),
+//                             Err(s) => Err(s),
+//                         }
+//                     }
+//                     None => Err(format!("No such function: `{}`", s.text)),
+//                 }
+//             } else {
+//                 panic!("first elem isn't an Atom: {:?}", &v[..]);
+//             }
+//         }
+//     }
+// }
 
 
 
