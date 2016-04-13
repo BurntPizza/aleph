@@ -1,6 +1,8 @@
 
 //! The Core library: the language underpinnings.
 
+// TODO: ALL of this (expect maybe the reader macros)
+
 use itertools::*;
 
 use reader::{Form, ReaderEnv, ReadError};
@@ -34,7 +36,6 @@ pub fn left_paren_reader(reader: &mut ReaderEnv, _: u8) -> Result<Option<Form>, 
                 list.push(try!(reader.read_token()));
             }
             _ => {
-                // TODO format!("Unexpected end of stream while reading list: `{:?}`", list)
                 reader.output.push(ReadError::eos());
                 return Err(());
             }
@@ -63,7 +64,7 @@ pub fn println(s: Args) -> Result<Form, String> {
 
 #[cfg(test)]
 mod test {
-    use super::super::reader;
+    use reader;
 
     #[test]
     fn test_line_comment_reader() {

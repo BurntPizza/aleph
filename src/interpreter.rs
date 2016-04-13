@@ -30,35 +30,12 @@ fn analyze(input: Vec<Form>) -> Result<Analysis, Err> {
     analyzer::analyze_from_root(input).map_err(Into::into)
 }
 
-fn compile(input: TypedAst) -> Result<Bytecode, Err> {
-    unimplemented!()
-}
-
-fn exec<T: Exec>(input: T) -> ExecResult {
-    input.exec()
-}
-
-type TypedAst = (); // TODO
-type Bytecode = usize; // TODO
-
-
 // For now, just represent the result as a string
+// Note: from lost commit: replace string with AstNode
 type ExecResult = Result<String, Err>;
 
 // For testing until typecheck is implemented
 impl Exec for Analysis {
-    fn exec(&self) -> ExecResult {
-        unimplemented!()
-    }
-}
-
-impl Exec for TypedAst {
-    fn exec(&self) -> ExecResult {
-        unimplemented!()
-    }
-}
-
-impl Exec for Bytecode {
     fn exec(&self) -> ExecResult {
         unimplemented!()
     }
