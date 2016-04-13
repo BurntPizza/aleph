@@ -1,6 +1,7 @@
 
+use std::error;
+use std::fmt::{self, Display, Formatter};
 
-use repr::AstNode;
 use reader::Form;
 use symbol_table::*;
 
@@ -17,7 +18,6 @@ pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
 }
 
 fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, AnalyzerError> {
-
     match *form {
         Form::Atom(ref s) => {
             let text = &*s.text;
@@ -75,6 +75,32 @@ impl Analysis {
 }
 
 #[derive(Debug)]
+pub enum AstNode {
+    // TODO
+    Const(i64),
+
+    // symbol table id
+    Var(u32),
+
+    // callee, args
+    Inv(Box<AstNode>, Vec<AstNode>),
+}
+
+impl AstNode {
+    pub fn int_const(val: i64) -> Self {
+        AstNode::Const(val)
+    }
+
+    pub fn var(id: u32) -> Self {
+        AstNode::Var(id)
+    }
+
+    pub fn inv(callee: AstNode, args: Vec<AstNode>) -> Self {
+        AstNode::Inv(Box::new(callee), args)
+    }
+}
+
+#[derive(Debug)]
 pub enum AnalyzerError {
     EmptyForm,
     UndefinedIdent(String),
@@ -87,14 +113,14 @@ impl AnalyzerError {
 }
 
 
-impl ::std::fmt::Display for AnalyzerError {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+impl Display for AnalyzerError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         // TODO
         write!(f, "{:?}", self)
     }
 }
 
-impl ::std::error::Error for AnalyzerError {
+impl error::Error for AnalyzerError {
     fn description(&self) -> &str {
         unimplemented!()
     }

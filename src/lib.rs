@@ -11,7 +11,6 @@ extern crate hamt;
 
 pub mod symbol_table;
 pub mod core;
-pub mod repr;
 pub mod reader;
 pub mod analyzer;
 pub mod interpreter;
