@@ -1,7 +1,7 @@
 
 use std::error::Error;
 
-use reader::{self, Form};
+use reader::{self, Form, InputStream};
 use analyzer::{self, Analysis};
 
 // TODO: return type
@@ -22,7 +22,7 @@ pub fn interpret<T: Into<String>>(input: T) -> String {
 }
 
 fn read(input: String) -> Result<Vec<Form>, Err> {
-    let mut reader = reader::ReaderEnv::new_default(super::InputStream::new(input));
+    let mut reader = reader::ReaderEnv::new_default(InputStream::new(input));
     reader.read_all().map_err(|_| reader.last_error().into())
 
 }

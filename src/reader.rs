@@ -7,7 +7,6 @@ use std::fmt::{self, Display, Debug, Formatter};
 use itertools::*;
 
 use core;
-use super::InputStream;
 
 use self::CharSyntaxType::*;
 use self::MacroCharType::*;
@@ -16,6 +15,39 @@ use self::ReadErrorType::*;
 
 /// The type of functions implementing reader macros
 pub type MacroFunction = fn(&mut ReaderEnv, u8) -> Result<Option<Form>, ()>;
+
+// Note: guaranteed to be ASCII
+#[derive(Debug, Clone)]
+pub struct InputStream {
+    src: String,
+    idx: usize,
+}
+
+impl InputStream {
+    pub fn new(src: String) -> Self {
+        assert!(::std::ascii::AsciiExt::is_ascii(&*src));
+        InputStream { src: src, idx: 0 }
+    }
+
+    pub fn unread(&mut self) {
+        assert!(self.idx > 0);
+        self.idx -= 1;
+    }
+}
+
+impl Iterator for InputStream {
+    type Item = u8;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx < self.src.len() {
+            let c = Some(self.src.as_bytes()[self.idx]);
+            self.idx += 1;
+            c
+        } else {
+            None
+        }
+    }
+}
+
 
 
 #[derive(Clone, Debug, PartialEq, Default)]
