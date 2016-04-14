@@ -35,6 +35,7 @@ impl SymbolTable {
         let record = Record {
             id: id,
             ident: ident.clone(),
+            kind: VarKind::Normal, // TODO
         };
 
         self.ident_map = self.ident_map.clone().plus(ident, id);
@@ -58,6 +59,7 @@ impl SymbolTable {
 #[derive(Debug)]
 pub struct Record {
     ident: String,
+    kind: VarKind,
     id: u32,
 }
 
@@ -69,6 +71,14 @@ impl Record {
     pub fn ident(&self) -> &str {
         &*self.ident
     }
+}
+
+#[derive(Debug)]
+enum VarKind {
+    // builtins
+    Special,
+    // user-defined
+    Normal,
 }
 
 fn next_id() -> u32 {
@@ -87,22 +97,45 @@ impl Debug for SymbolTable {
 
         let id_size = cmp::max("id".len(),
                                records.last().map_or(0, |r| r.id().to_string().len()));
+
         let ident_size = cmp::max("ident".len(),
                                   records.iter().map(|r| r.ident().len()).max().unwrap_or(0));
 
-        let fmt_record = |a: &Display, b: &Display| -> String {
-            format!("| {:>2$} | {:>3$} |", a, b, id_size, ident_size)
-        };
+        let var_kind_size = "special".len();
 
-        let header = format!("| {:>2$} | {:>3$} |", "id", "ident", id_size, ident_size);
-        let sep = format!("|-{0:->1$}-|-{0:->2$}-|", "", id_size, ident_size);
+        let header = format!("| {:>3$} | {:>4$} | {:>5$} |",
+                             "id",
+                             "ident",
+                             "kind",
+                             id_size,
+                             ident_size,
+                             var_kind_size);
+
+        let sep = format!("|-{0:->1$}-|-{0:->2$}-|-{0:->3$}-|",
+                          "",
+                          id_size,
+                          ident_size,
+                          var_kind_size);
 
         try!(writeln!(f, "SymbolTable:"));
         try!(writeln!(f, "{}", header));
         try!(writeln!(f, "{}", sep));
 
         for r in records {
-            try!(writeln!(f, "{}", fmt_record(&r.id(), &r.ident())))
+            let r_kind = match r.kind {
+                VarKind::Normal => "normal",
+                VarKind::Special => "special",
+            };
+
+            let out = format!("| {:>3$} | {:>4$} | {:>5$} |",
+                              r.id(),
+                              r.ident(),
+                              r_kind,
+                              id_size,
+                              ident_size,
+                              var_kind_size);
+
+            try!(writeln!(f, "{}", out))
         }
 
         Ok(())
