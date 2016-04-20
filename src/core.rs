@@ -1,4 +1,5 @@
 
+
 //! The Core library: the language underpinnings.
 
 // TODO: ALL of this (expect maybe the reader macros)
@@ -31,15 +32,28 @@ pub fn special_form_do(args: &[AstNode], env: &SymbolTable) -> Ret {
     }
 }
 
-pub fn builtin_fn_plus(args: &[AstNode], _: &SymbolTable) -> Ret {
+pub fn builtin_fn_plus(args: &[AstNode], env: &SymbolTable) -> Ret {
+    fn eval_node(arg: &AstNode, env: &SymbolTable) -> Result<i64, Box<Error>> {
+        let mut sum = 0;
+
+        match *arg {
+            AstNode::Const(val) => sum += val,
+            AstNode::Inv(..) => {
+                let arg = try!(interpreter::exec_ast(arg, env));
+                sum += try!(eval_node(&arg, env));
+            }
+            _ => unimplemented!(),
+        }
+
+        Ok(sum)
+    }
+
     let mut sum = 0;
 
     for arg in args {
-        match *arg {
-            AstNode::Const(val) => sum += val,
-            _ => unimplemented!(),
-        }
+        sum += try!(eval_node(arg, env))
     }
+
     Ok(AstNode::int_const(sum))
 }
 

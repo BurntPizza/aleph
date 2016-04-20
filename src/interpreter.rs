@@ -92,4 +92,9 @@ mod test {
     fn add_int_constants() {
         assert_eq!(interpret("(+ 1 2 3)"), "6");
     }
+
+    #[test]
+    fn nested_add_int_constants() {
+        assert_eq!(interpret("(+ (+) (+ 1 (+ 1 1)) (+ 1 2))"), "6");
+    }
 }
