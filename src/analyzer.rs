@@ -2,17 +2,40 @@
 use std::error;
 use std::fmt::{self, Display, Formatter};
 
+use core;
 use reader::Form;
 use symbol_table::*;
 
 pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
-    let mut analysis = Analysis::root();
+    let mut env = SymbolTable::empty();
+    env.add_ident("do", VarKind::Special(core::special_form_do))
+       .unwrap();
+
+    // TODO: should be core, right?
+    env.add_ident("+", VarKind::Special(core::builtin_fn_plus)).unwrap();
+
+    // ////
+
+    let mut top_level_nodes = vec![];
 
     for form in forms {
-        try!(analyze_in_env(&form, &mut analysis.symbol_table));
+        top_level_nodes.push(try!(analyze_in_env(&form, &mut env)));
     }
 
-    println!("{:#?}", analysis);
+    // ///
+
+    let do_id = env.lookup_ident("do")
+                   .map(Record::id)
+                   .expect("No `do` found in env");
+
+    let ast = AstNode::inv(AstNode::var(do_id), top_level_nodes);
+
+    let analysis = Analysis {
+        ast: ast,
+        symbol_table: env,
+    };
+
+    println!("analysis: {:#?}", analysis);
 
     Ok(analysis)
 }
@@ -60,24 +83,6 @@ pub struct Analysis {
 }
 
 impl Analysis {
-    fn root() -> Self {
-        let mut env = SymbolTable::empty();
-        env.add_ident("do").unwrap();
-
-        // TODO: should be core, right?
-        env.add_ident("+").unwrap();
-
-        let do_id = env.lookup_ident("do")
-                       .map(Record::id)
-                       .expect("No `do` found in env");
-        let ast = AstNode::inv(AstNode::var(do_id), vec![]);
-
-        Analysis {
-            ast: ast,
-            symbol_table: env,
-        }
-    }
-
     pub fn ast(&self) -> &AstNode {
         &self.ast
     }

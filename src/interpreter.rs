@@ -1,6 +1,6 @@
+
 use itertools::*;
 
-use std::borrow::Cow;
 use std::error::Error;
 
 use reader::{self, Form, InputStream};
@@ -46,38 +46,50 @@ fn exec_and_print(analysis: Analysis) -> String {
         }
     }
 
-    helper(&*analysis.exec().unwrap(), analysis.env())
+    let result = exec_analysis(&analysis).unwrap();
+
+    helper(&result, analysis.env())
 }
 
-type ExecResult<'a> = Result<Cow<'a, AstNode>, Err>;
+pub type ExecResult = Result<AstNode, Box<Error>>;
 
 // For testing until typecheck is implemented
-impl Exec for Analysis {
-    fn exec(&self) -> ExecResult {
-        match *self.ast() {
-            AstNode::Inv(ref callee, ref args) => {
-                // TODO
-                // cheat: keep travis happy while I work
-                Ok(Cow::Owned(AstNode::int_const(6)))
+fn exec_analysis(analysis: &Analysis) -> ExecResult {
+    let ast = analysis.ast();
+    let env = analysis.env();
+
+    exec_ast(ast, env)
+}
+
+pub fn exec_ast(ast: &AstNode, env: &SymbolTable) -> ExecResult {
+    match *ast {
+        AstNode::Inv(ref callee, ref args) => {
+            match **callee {
+                AstNode::Var(var_id) => {
+                    // TODO
+                    let var_record = env.lookup_id(var_id).unwrap();
+
+                    match *var_record.kind() {
+                        VarKind::Special(func) => func(args, env),
+                        VarKind::Normal => Err(unimplemented!()),
+                    }
+                }
+                AstNode::Inv(..) => unimplemented!(),
+                AstNode::Const(_) => Err("Cannot invoke constant".into()),
             }
-            ref other => Ok(Cow::Borrowed(other)),
         }
+        ref other => Ok(other.clone()),
     }
 }
 
 type Err = Box<Error>;
-
-trait Exec {
-    fn exec(&self) -> ExecResult;
-}
-
 
 #[cfg(test)]
 mod test {
     use super::*;
 
     #[test]
-    fn test1() {
+    fn add_int_constants() {
         assert_eq!(interpret("(+ 1 2 3)"), "6");
     }
 }

@@ -3,8 +3,11 @@ use hamt::HamtMap;
 use itertools::*;
 
 use std::error::Error;
+use std::borrow::Cow;
 use std::fmt::{self, Display, Debug, Formatter};
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+
+use analyzer::AstNode;
 
 pub struct SymbolTable {
     ident_map: HamtMap<String, u32>,
@@ -19,7 +22,10 @@ impl SymbolTable {
         }
     }
 
-    pub fn add_ident<T: Into<String>>(&mut self, ident: T) -> Result<&Record, Box<Error>> {
+    pub fn add_ident<T: Into<String>>(&mut self,
+                                      ident: T,
+                                      kind: VarKind)
+                                      -> Result<&Record, Box<Error>> {
         let ident = ident.into();
 
         if let Some(record) = self.lookup_ident(&*ident) {
@@ -35,7 +41,7 @@ impl SymbolTable {
         let record = Record {
             id: id,
             ident: ident.clone(),
-            kind: VarKind::Normal, // TODO
+            kind: kind,
         };
 
         self.ident_map = self.ident_map.clone().plus(ident, id);
@@ -71,14 +77,30 @@ impl Record {
     pub fn ident(&self) -> &str {
         &*self.ident
     }
+
+    pub fn kind(&self) -> &VarKind {
+        &self.kind
+    }
 }
 
-#[derive(Debug)]
-enum VarKind {
+pub type Func = fn(&[AstNode], &SymbolTable) -> Result<AstNode, Box<Error>>;
+
+pub enum VarKind {
     // builtins
-    Special,
+    Special(Func),
     // user-defined
     Normal,
+}
+
+impl Debug for VarKind {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let string = match *self {
+            VarKind::Normal => "Normal",
+            VarKind::Special(..) => "Special(...)",
+        };
+
+        write!(f, "{}", string)
+    }
 }
 
 fn next_id() -> u32 {
@@ -124,7 +146,7 @@ impl Debug for SymbolTable {
         for r in records {
             let r_kind = match r.kind {
                 VarKind::Normal => "normal",
-                VarKind::Special => "special",
+                VarKind::Special(_) => "special",
             };
 
             let out = format!("| {:>3$} | {:>4$} | {:>5$} |",

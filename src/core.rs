@@ -5,8 +5,44 @@
 
 use itertools::*;
 
+use std::error::Error;
+
 use reader::{Form, ReaderEnv, ReadError};
 use reader::CharSyntaxType::*;
+use interpreter;
+use analyzer::AstNode;
+use symbol_table::SymbolTable;
+
+pub type Ret = Result<AstNode, Box<Error>>;
+
+pub fn special_form_do(args: &[AstNode], env: &SymbolTable) -> Ret {
+    match args.len() {
+        0 => unimplemented!(),
+        1 => interpreter::exec_ast(&args[0], env),
+        _ => {
+            let (last, others) = args.split_last().unwrap();
+
+            for arg in others {
+                try!(interpreter::exec_ast(arg, env));
+            }
+
+            interpreter::exec_ast(last, env)
+        }
+    }
+}
+
+pub fn builtin_fn_plus(args: &[AstNode], _: &SymbolTable) -> Ret {
+    let mut sum = 0;
+
+    for arg in args {
+        match *arg {
+            AstNode::Const(val) => sum += val,
+            _ => unimplemented!(),
+        }
+    }
+    Ok(AstNode::int_const(sum))
+}
+
 
 pub type Args<'a> = &'a [Form];
 pub type Function = fn(Args) -> Result<Form, String>;
