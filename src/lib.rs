@@ -13,4 +13,5 @@ pub mod symbol_table;
 pub mod core;
 pub mod reader;
 pub mod analyzer;
-pub mod interpreter;
+pub mod interpreter; // this will eventually be entirely replaced by vm
+pub mod vm;
