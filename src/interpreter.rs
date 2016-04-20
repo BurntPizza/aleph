@@ -24,31 +24,31 @@ pub fn interpret<T: Into<String>>(input: T) -> String {
     //        .to_string()
 }
 
-fn read(input: String) -> Result<Vec<Form>, Err> {
+fn read(input: String) -> Result<Vec<Form>, Box<Error>> {
     let mut reader = reader::ReaderEnv::new_default(InputStream::new(input));
     reader.read_all().map_err(|_| reader.last_error().into())
 
 }
-fn analyze(input: Vec<Form>) -> Result<Analysis, Err> {
+fn analyze(input: Vec<Form>) -> Result<Analysis, Box<Error>> {
     analyzer::analyze_from_root(input).map_err(Into::into)
 }
 
 fn exec_and_print(analysis: Analysis) -> String {
-    fn helper(ast: &AstNode, env: &SymbolTable) -> String {
+    fn print_to_string(ast: &AstNode, env: &SymbolTable) -> String {
         match *ast {
             AstNode::Const(val) => format!("{}", val),
             AstNode::Var(id) => format!("{}", env.lookup_id(id).unwrap().ident()),
             AstNode::Inv(ref callee, ref args) => {
                 format!("({} {})",
-                        helper(&*callee, env),
-                        args.iter().map(|ast| helper(ast, env)).join(" "))
+                        print_to_string(&*callee, env),
+                        args.iter().map(|ast| print_to_string(ast, env)).join(" "))
             }
         }
     }
 
     let result = exec_analysis(&analysis).unwrap();
 
-    helper(&result, analysis.env())
+    print_to_string(&result, analysis.env())
 }
 
 pub type ExecResult = Result<AstNode, Box<Error>>;
@@ -82,7 +82,6 @@ pub fn exec_ast(ast: &AstNode, env: &SymbolTable) -> ExecResult {
     }
 }
 
-type Err = Box<Error>;
 
 #[cfg(test)]
 mod test {

@@ -4,8 +4,6 @@
 
 // TODO: ALL of this (expect maybe the reader macros)
 
-use itertools::*;
-
 use std::error::Error;
 
 use reader::{Form, ReaderEnv, ReadError};
@@ -33,28 +31,24 @@ pub fn special_form_do(args: &[AstNode], env: &SymbolTable) -> Ret {
 }
 
 pub fn builtin_fn_plus(args: &[AstNode], env: &SymbolTable) -> Ret {
-    fn eval_node(arg: &AstNode, env: &SymbolTable) -> Result<i64, Box<Error>> {
+    fn eval_node(args: &[AstNode], env: &SymbolTable) -> Result<i64, Box<Error>> {
         let mut sum = 0;
 
-        match *arg {
-            AstNode::Const(val) => sum += val,
-            AstNode::Inv(..) => {
-                let arg = try!(interpreter::exec_ast(arg, env));
-                sum += try!(eval_node(&arg, env));
+        for arg in args {
+            match *arg {
+                AstNode::Const(val) => sum += val,
+                AstNode::Inv(..) => {
+                    let arg = try!(interpreter::exec_ast(arg, env));
+                    sum += try!(eval_node(&[arg], env));
+                }
+                _ => unimplemented!(),
             }
-            _ => unimplemented!(),
         }
 
         Ok(sum)
     }
 
-    let mut sum = 0;
-
-    for arg in args {
-        sum += try!(eval_node(arg, env))
-    }
-
-    Ok(AstNode::int_const(sum))
+    Ok(AstNode::int_const(try!(eval_node(args, env))))
 }
 
 
@@ -97,18 +91,6 @@ pub fn left_paren_reader(reader: &mut ReaderEnv, _: u8) -> Result<Option<Form>, 
 pub fn right_paren_reader(reader: &mut ReaderEnv, _: u8) -> Result<Option<Form>, ()> {
     reader.output.push(ReadError::other("Unexpected right parenthesis"));
     Err(())
-}
-
-/// Print to stdout.
-pub fn print(s: Args) -> Result<Form, String> {
-    print!("{}", s.iter().join(" "));
-    Ok(Form::empty_list())
-}
-
-/// Print to stdout with newline.
-pub fn println(s: Args) -> Result<Form, String> {
-    println!("{}", s.iter().join(" "));
-    Ok(Form::empty_list())
 }
 
 

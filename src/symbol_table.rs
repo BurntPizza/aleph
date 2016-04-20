@@ -3,8 +3,7 @@ use hamt::HamtMap;
 use itertools::*;
 
 use std::error::Error;
-use std::borrow::Cow;
-use std::fmt::{self, Display, Debug, Formatter};
+use std::fmt::{self, Debug, Formatter};
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use analyzer::AstNode;
@@ -125,7 +124,7 @@ impl Debug for SymbolTable {
 
         let var_kind_size = "special".len();
 
-        let header = format!("| {:>3$} | {:>4$} | {:>5$} |",
+        let header = format!("| {:^3$} | {:^4$} | {:^5$} |",
                              "id",
                              "ident",
                              "kind",
