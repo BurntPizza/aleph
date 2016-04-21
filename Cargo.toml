@@ -13,6 +13,7 @@ name = "aleph"
 doc = false
 
 [dependencies]
+byteorder = "0.5"
 itertools = "0.4"
 clap = "^2"
 ansi_term = "0.7"

@@ -8,6 +8,7 @@
 
 extern crate itertools;
 extern crate hamt;
+extern crate byteorder;
 
 pub mod symbol_table;
 pub mod core;

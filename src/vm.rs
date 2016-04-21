@@ -1,94 +1,77 @@
 
+use byteorder::*;
+
 type RegisterT = i64;
 
-struct Vm {
-    registers: Vec<RegisterT>,
-    program_counter: usize,
-    program: Program,
-}
 
-impl Vm {
-    fn run(&mut self) -> RegisterT {
-        use self::Instruction::*;
+fn exec_program(program: Program) -> RegisterT {
+    use self::Instruction::*;
 
-        let mut stack = vec![StackFrame { ret_addr: self.program_counter }];
+    let mut ip = 0; // instruction pointer
+    let mut data_stack = Vec::with_capacity(128);
+    // let ret_stack = Vec::with_capacity(128);
 
-        loop {
-            let instr = self.program.instructions[self.program_counter];
-
-            match instr {
-                LoadConstImm(val) => {
-                    self.push_reg(val);
-                }
-                Move { src_idx, num } => {
-                    for i in 0..num as usize {
-                        let val = self.registers[src_idx as usize + i];
-                        self.push_reg(val);
-                    }
-                }
-                CallSpecial { builtin_idx, begin_args_idx, num_args } => {
-                    match builtin_idx {
-                        0 => {
-                            let begin = begin_args_idx as usize;
-                            let end = begin + num_args as usize;
-                            let ret_val = self.registers[begin..end]
-                                              .iter()
-                                              .fold(0, |acc, e| acc + e);
-
-                            self.push_reg(ret_val);
-                        }
-                        _ => unimplemented!(),
-                    }
-                }
-                CallNormal { .. } => unimplemented!(),
-                Exit(reg_idx) => return self.registers[reg_idx as usize],
+    loop {
+        let i = ip;
+        ip += 1;
+        match as_inst(program.instructions[i]) {
+            LoadConst => {
+                let val = LittleEndian::read_i64(&program.instructions[ip..ip + 8]);
+                ip += 8;
+                data_stack.push(val);
             }
-            self.program_counter += 1;
+            Add => {
+                let num_args = data_stack.pop().expect("stack underflow: add") as usize;
+                assert!(data_stack.len() >= num_args, "stack underflow: add");
+                let idx = data_stack.len() - num_args;
+                let val = data_stack.drain(idx..).fold(0, |acc, e| acc + e);
+                data_stack.push(val);
+            }
+            CallSpecial => unimplemented!(),
+            CallNormal => unimplemented!(),
+            Exit => return data_stack.pop().expect("stack underflow: exit"),
         }
     }
+}
 
-    fn push_reg(&mut self, val: RegisterT) {
-        self.registers.push(val);
-    }
+fn as_byte(i: Instruction) -> u8 {
+    unsafe { ::std::mem::transmute(i) }
+}
+
+fn as_inst(b: u8) -> Instruction {
+    unsafe { ::std::mem::transmute(b) }
 }
 
 #[derive(Debug, PartialEq)]
 struct Program {
-    instructions: Vec<Instruction>,
+    instructions: Vec<u8>,
 }
 
 fn new_program() -> ProgramBuilder {
-    ProgramBuilder {
-        reg_counter: 0,
-        instructions: vec![],
-    }
+    ProgramBuilder { instructions: vec![] }
 }
 
 struct ProgramBuilder {
-    reg_counter: usize,
-    instructions: Vec<Instruction>,
+    instructions: Vec<u8>,
 }
 
 impl ProgramBuilder {
     fn load_const(mut self, val: RegisterT) -> Self {
-        self.instructions.push(Instruction::LoadConstImm(val));
-        self.reg_counter += 1;
+        self.instructions.push(as_byte(Instruction::LoadConst));
+        let mut tmp = [0; 8];
+        LittleEndian::write_i64(&mut tmp, val);
+        self.instructions.extend_from_slice(&tmp);
         self
     }
 
-    fn call_special(mut self, builtin_idx: u32, arg_idx: u16, num_args: u16) -> Self {
-        self.instructions.push(Instruction::CallSpecial {
-            builtin_idx: builtin_idx,
-            begin_args_idx: arg_idx,
-            num_args: num_args,
-        });
-        self.reg_counter += 1;
+    fn add(mut self, num_args: u8) -> Self {
+        self = self.load_const(num_args as i64);
+        self.instructions.push(as_byte(Instruction::Add));
         self
     }
 
-    fn pop_exit(mut self) -> Self {
-        let reg_idx = self.reg_counter - 1;
-        self.instructions.push(Instruction::Exit(reg_idx as u16));
+    fn exit(mut self) -> Self {
+        self.instructions.push(as_byte(Instruction::Exit));
         self
     }
 
@@ -97,55 +80,32 @@ impl ProgramBuilder {
     }
 }
 
-struct StackFrame {
-    ret_addr: usize,
-}
-
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Instruction {
-    /// Load imm into a fresh register
-    LoadConstImm(i64),
-    /// Call builtin and put result into a fresh register
-    CallSpecial {
-        builtin_idx: u32,
-        begin_args_idx: u16,
-        num_args: u16,
-    },
-    /// Call fn and put result into a fresh register
-    CallNormal {
-        target_addr: u32,
-        begin_args_idx: u16,
-        num_args: u16,
-    },
-    /// Copy range of registers into range of fresh registers
-    Move {
-        src_idx: u16,
-        num: u16,
-    },
-    /// Exit the program, returning value in indexed register
-    Exit(u16),
+    LoadConst,
+    Add,
+    CallSpecial,
+    CallNormal,
+    Exit,
 }
 
 #[cfg(test)]
 mod test {
-    use super::{Vm, new_program};
+
+    use super::{new_program, exec_program};
 
     #[test]
     fn raw_program_addition() {
         // (+ 1 2 3) == 6
 
-        let mut vm = Vm {
-            program_counter: 0,
-            registers: vec![],
-            program: new_program()
-                         .load_const(1)
-                         .load_const(2)
-                         .load_const(3)
-                         .call_special(0, 0, 3)
-                         .pop_exit()
-                         .finish(),
-        };
+        let p = new_program()
+                    .load_const(1)
+                    .load_const(2)
+                    .load_const(3)
+                    .add(3)
+                    .exit()
+                    .finish();
 
-        assert_eq!(vm.run(), 6);
+        assert_eq!(exec_program(p), 6);
     }
 }
