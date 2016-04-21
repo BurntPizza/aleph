@@ -52,15 +52,56 @@ impl Vm {
     }
 }
 
+#[derive(Debug, PartialEq)]
 struct Program {
     instructions: Vec<Instruction>,
+}
+
+fn new_program() -> ProgramBuilder {
+    ProgramBuilder {
+        reg_counter: 0,
+        instructions: vec![],
+    }
+}
+
+struct ProgramBuilder {
+    reg_counter: usize,
+    instructions: Vec<Instruction>,
+}
+
+impl ProgramBuilder {
+    fn load_const(mut self, val: RegisterT) -> Self {
+        self.instructions.push(Instruction::LoadConstImm(val));
+        self.reg_counter += 1;
+        self
+    }
+
+    fn call_special(mut self, builtin_idx: u32, arg_idx: u16, num_args: u16) -> Self {
+        self.instructions.push(Instruction::CallSpecial {
+            builtin_idx: builtin_idx,
+            begin_args_idx: arg_idx,
+            num_args: num_args,
+        });
+        self.reg_counter += 1;
+        self
+    }
+
+    fn pop_exit(mut self) -> Self {
+        let reg_idx = self.reg_counter - 1;
+        self.instructions.push(Instruction::Exit(reg_idx as u16));
+        self
+    }
+
+    fn finish(self) -> Program {
+        Program { instructions: self.instructions }
+    }
 }
 
 struct StackFrame {
     ret_addr: usize,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Debug)]
 enum Instruction {
     /// Load imm into a fresh register
     LoadConstImm(i64),
@@ -87,8 +128,7 @@ enum Instruction {
 
 #[cfg(test)]
 mod test {
-    use super::{Program, Vm};
-    use super::Instruction::*;
+    use super::{Vm, new_program};
 
     #[test]
     fn raw_program_addition() {
@@ -97,17 +137,13 @@ mod test {
         let mut vm = Vm {
             program_counter: 0,
             registers: vec![],
-            program: Program {
-                instructions: vec![LoadConstImm(1),
-                                   LoadConstImm(2),
-                                   LoadConstImm(3),
-                                   CallSpecial {
-                                       builtin_idx: 0, // TODO
-                                       begin_args_idx: 0,
-                                       num_args: 3,
-                                   },
-                                   Exit(3)],
-            },
+            program: new_program()
+                         .load_const(1)
+                         .load_const(2)
+                         .load_const(3)
+                         .call_special(0, 0, 3)
+                         .pop_exit()
+                         .finish(),
         };
 
         assert_eq!(vm.run(), 6);
