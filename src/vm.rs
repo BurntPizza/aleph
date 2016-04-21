@@ -61,14 +61,15 @@ pub struct Program {
 
 pub fn new_program() -> ProgramBuilder {
     ProgramBuilder {
-        fn_cursor: None,
+        fn_cursor: vec![],
         fn_defs: Default::default(),
         instructions: vec![],
     }
 }
 
 pub struct ProgramBuilder {
-    fn_cursor: Option<u32>,
+    // stack of ids
+    fn_cursor: Vec<u32>,
     // var_id -> fn_def
     fn_defs: HashMap<u32, Vec<u8>>,
     instructions: Vec<u8>,
@@ -76,9 +77,9 @@ pub struct ProgramBuilder {
 
 macro_rules! current_def {
     ($e:ident) => {
-        match $e.fn_cursor {
-            Some(id) => $e.fn_defs.get_mut(&id).unwrap(),
-            _ => &mut $e.instructions,
+        match $e.fn_cursor.len() {
+            0 => &mut $e.instructions,
+            n => $e.fn_defs.get_mut(&$e.fn_cursor[n - 1]).unwrap(),
         }
     }
 }
@@ -86,7 +87,11 @@ macro_rules! current_def {
 impl ProgramBuilder {
     pub fn begin_fn_def(&mut self, id: u32) {
         self.fn_defs.insert(id, vec![]);
-        self.fn_cursor = Some(id);
+        self.fn_cursor.push(id);
+    }
+
+    pub fn end_fn_def(&mut self) {
+        self.fn_cursor.pop();
     }
 
     pub fn load_const(&mut self, val: RegisterT) {

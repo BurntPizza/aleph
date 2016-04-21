@@ -78,7 +78,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
                         }
                         emit(callee, env, p)
                     }
-                    VarKind::Special(_) => {
+                    VarKind::Special => {
                         match var_record.ident() {
                             "do" => emit_do(p, env, args),
                             "+" => {
@@ -104,6 +104,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
             }
         }
     }
+
     fn emit(node: &AstNode, env: &SymbolTable, p: &mut ProgramBuilder) -> Result<(), Box<Error>> {
         match *node {
             AstNode::Const(val) => emit_const(p, val),
@@ -124,55 +125,6 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
 
 fn exec(input: Program) -> String {
     format!("{}", exec_program(input))
-}
-
-fn exec_and_print(analysis: Analysis) -> String {
-    fn print_to_string(ast: &AstNode, env: &SymbolTable) -> String {
-        match *ast {
-            AstNode::Const(val) => format!("{}", val),
-            AstNode::Var(id) => format!("{}", env.lookup_id(id).unwrap().ident()),
-            AstNode::Inv(ref callee, ref args) => {
-                format!("({} {})",
-                        print_to_string(&*callee, env),
-                        args.iter().map(|ast| print_to_string(ast, env)).join(" "))
-            }
-        }
-    }
-
-    let result = exec_analysis(&analysis).unwrap();
-
-    print_to_string(&result, analysis.env())
-}
-
-pub type ExecResult = Result<AstNode, Box<Error>>;
-
-// For testing until typecheck is implemented
-fn exec_analysis(analysis: &Analysis) -> ExecResult {
-    let ast = analysis.ast();
-    let env = analysis.env();
-
-    exec_ast(ast, env)
-}
-
-pub fn exec_ast(ast: &AstNode, env: &SymbolTable) -> ExecResult {
-    match *ast {
-        AstNode::Inv(ref callee, ref args) => {
-            match **callee {
-                AstNode::Var(var_id) => {
-                    // TODO
-                    let var_record = env.lookup_id(var_id).unwrap();
-
-                    match *var_record.kind() {
-                        VarKind::Special(func) => func(args, env),
-                        VarKind::Normal => Err(unimplemented!()),
-                    }
-                }
-                AstNode::Inv(..) => unimplemented!(),
-                AstNode::Const(_) => Err("Cannot invoke constant".into()),
-            }
-        }
-        ref other => Ok(other.clone()),
-    }
 }
 
 

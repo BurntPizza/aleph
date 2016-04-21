@@ -82,11 +82,9 @@ impl Record {
     }
 }
 
-pub type Func = fn(&[AstNode], &SymbolTable) -> Result<AstNode, Box<Error>>;
-
 pub enum VarKind {
     // builtins
-    Special(Func),
+    Special,
     // user-defined
     Normal,
 }
@@ -95,7 +93,7 @@ impl Debug for VarKind {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let string = match *self {
             VarKind::Normal => "Normal",
-            VarKind::Special(..) => "Special(...)",
+            VarKind::Special => "Special",
         };
 
         write!(f, "{}", string)
@@ -145,7 +143,7 @@ impl Debug for SymbolTable {
         for r in records {
             let r_kind = match r.kind {
                 VarKind::Normal => "normal",
-                VarKind::Special(_) => "special",
+                VarKind::Special => "special",
             };
 
             let out = format!("| {:>3$} | {:>4$} | {:>5$} |",
