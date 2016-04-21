@@ -59,7 +59,7 @@ fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, Analyze
             match v.len() {
                 0 => Err(AnalyzerError::empty_form()),
                 _ => {
-                    let ref invocation = v[0];
+                    let invocation = &v[0];
                     let args = &v[1..];
                     let callee = try!(analyze_in_env(invocation, env));
                     let mut evaluated_args = Vec::with_capacity(args.len());
