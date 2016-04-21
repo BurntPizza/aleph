@@ -82,10 +82,13 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
                         match var_record.ident() {
                             "do" => emit_do(p, env, args),
                             "+" => {
+                                assert!(args.len() < 256);
+
                                 for arg in args {
                                     try!(emit(arg, env, p));
                                 }
-                                p.add(args.len());
+
+                                p.add(args.len() as u8);
                                 Ok(())
                             } 
                             _ => unimplemented!(),

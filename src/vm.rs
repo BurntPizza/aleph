@@ -2,6 +2,7 @@
 use itertools::*;
 use byteorder::*;
 
+use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 
 pub type RegisterT = i64;
@@ -22,7 +23,6 @@ pub fn exec_program(program: Program) -> RegisterT {
         let i = ip;
         ip += 1;
         let instr = as_inst(program.instructions[i]);
-        println!("idx {}: {:?}", i, instr);
         match instr {
             LoadConst => {
                 let val = LittleEndian::read_i64(&program.instructions[ip..ip + 8]);
@@ -30,21 +30,11 @@ pub fn exec_program(program: Program) -> RegisterT {
                 data_stack.push(val);
             }
             Add => {
-                let num_args = pop_usize(&mut data_stack);
+                let num_args = program.instructions[ip] as usize;
+                ip += 1;
                 assert!(data_stack.len() >= num_args, "stack underflow: add");
                 let idx = data_stack.len() - num_args;
                 let val = data_stack.drain(idx..).fold(0, |acc, e| acc + e);
-                data_stack.push(val);
-            }
-            Do => {
-                let num_args = pop_usize(&mut data_stack);
-                assert!(num_args > 0); // TODO
-                assert!(data_stack.len() >= num_args, "stack underflow: do");
-                let idx = data_stack.len() - num_args;
-                let val = data_stack.drain(idx..).fold(0, |_, e| {
-                    let ret = unimplemented!();
-                    ret
-                });
                 data_stack.push(val);
             }
             Drop => {
@@ -70,37 +60,58 @@ pub struct Program {
 }
 
 pub fn new_program() -> ProgramBuilder {
-    ProgramBuilder { instructions: vec![] }
+    ProgramBuilder {
+        fn_cursor: None,
+        fn_defs: Default::default(),
+        instructions: vec![],
+    }
 }
 
 pub struct ProgramBuilder {
+    fn_cursor: Option<u32>,
+    // var_id -> fn_def
+    fn_defs: HashMap<u32, Vec<u8>>,
     instructions: Vec<u8>,
 }
 
+macro_rules! current_def {
+    ($e:ident) => {
+        match $e.fn_cursor {
+            Some(id) => $e.fn_defs.get_mut(&id).unwrap(),
+            _ => &mut $e.instructions,
+        }
+    }
+}
+
 impl ProgramBuilder {
+    pub fn begin_fn_def(&mut self, id: u32) {
+        self.fn_defs.insert(id, vec![]);
+        self.fn_cursor = Some(id);
+    }
+
     pub fn load_const(&mut self, val: RegisterT) {
-        self.instructions.push(as_byte(Instruction::LoadConst));
+        let def = current_def!(self);
+
+        def.push(as_byte(Instruction::LoadConst));
         let mut tmp = [0; 8];
         LittleEndian::write_i64(&mut tmp, val);
-        self.instructions.extend_from_slice(&tmp);
+        def.extend_from_slice(&tmp);
     }
 
-    pub fn add(&mut self, num_args: usize) {
-        self.load_const(num_args as i64);
-        self.instructions.push(as_byte(Instruction::Add));
-    }
-
-    pub fn do_(&mut self, num_args: usize) {
-        self.load_const(num_args as i64);
-        self.instructions.push(as_byte(Instruction::Do));
+    pub fn add(&mut self, num_args: u8) {
+        let def = current_def!(self);
+        def.push(as_byte(Instruction::Add));
+        def.push(num_args);
     }
 
     pub fn drop(&mut self) {
-        self.instructions.push(as_byte(Instruction::Drop));
+        let def = current_def!(self);
+        def.push(as_byte(Instruction::Drop));
     }
 
     pub fn exit(&mut self) {
-        self.instructions.push(as_byte(Instruction::Exit));
+        let def = current_def!(self);
+        def.push(as_byte(Instruction::Exit));
     }
 
     pub fn finish(self) -> Program {
@@ -112,7 +123,6 @@ impl ProgramBuilder {
 enum Instruction {
     LoadConst,
     Add,
-    Do,
     Drop,
     CallSpecial,
     CallNormal,
@@ -144,8 +154,11 @@ impl Debug for Program {
                                             let val = LittleEndian::read_i64(&*raw);
                                             Some(format!("{:>4}:\t ldc {:>3}", idx, val))
                                         }
-                                        Add => Some(format!("{}:add ?", idx)),
-                                        Do => Some(format!("{}:do ?", idx)),
+                                        Add => {
+                                            Some(format!("{:>4}:\t add {:>3}",
+                                                         idx,
+                                                         it.next().unwrap().1))
+                                        }
                                         Exit => Some(format!("{:>4}:\texit", idx)),
                                         Drop => Some(format!("{:>4}:\tdrop", idx)),
                                         _ => unimplemented!(),
@@ -153,34 +166,6 @@ impl Debug for Program {
                                 }
                             }
                         })
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
-                        .batching(|mut it| {
-                            match it.next() {
-                                None => None,
-                                Some(string) => {
-                                    if string.contains("add") {
-                                        let next = it.next().unwrap();
-                                        Some(format!("{:>4}:\t add {:>3}",
-                                                     &next[..next.find(':').unwrap()],
-                                                     &next[next.rfind(' ').unwrap()..]))
-
-                                    } else if string.contains("do") {
-                                        let next = it.next().unwrap();
-                                        Some(format!("{:>4}:\t  do {:>3}",
-                                                     &next[..next.find(':').unwrap()],
-                                                     &next[next.rfind(' ').unwrap()..]))
-
-                                    } else {
-                                        Some(string)
-                                    }
-                                }
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .into_iter()
-                        .rev()
                         .join("\n");
 
         writeln!(f, "\n{}", lines)
