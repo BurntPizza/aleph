@@ -128,7 +128,18 @@ impl ProgramBuilder {
     }
 
     pub fn end_fn_def(&mut self) {
-        self.fn_cursor.pop();
+        self.fn_cursor.pop().unwrap();
+    }
+
+    pub fn call(&mut self, jmp_addr: u16) {
+        let def = current_def!(self);
+        def.push(as_byte(Instruction::Call));
+        def.write_u16::<Endianness>(jmp_addr).unwrap();
+    }
+
+    pub fn ret(&mut self) {
+        let def = current_def!(self);
+        def.push(as_byte(Instruction::Ret));
     }
 
     pub fn def_var(&mut self) -> u16 {
@@ -307,5 +318,30 @@ mod test {
         let p = p.finish();
 
         assert_eq!(exec_program(p), 10);
+    }
+
+    #[test]
+    fn calls() {
+        // (defn f [x]
+        //   (+ 2 x))
+        // (defn g [x]
+        //   (f x))
+        // (g (f 4))
+
+        let mut p = new_program();
+
+        p.load_const(4);
+        p.call(16);
+        p.call(28);
+        p.exit();
+        p.load_const(2); // addr 16
+        p.add(2);
+        p.ret();
+        p.call(16); // addr 28
+        p.ret();
+
+        let p = p.finish();
+
+        assert_eq!(exec_program(p), 8);
     }
 }
