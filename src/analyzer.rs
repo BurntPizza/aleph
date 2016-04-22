@@ -2,16 +2,14 @@
 use std::error;
 use std::fmt::{self, Display, Formatter};
 
-use core;
 use reader::Form;
 use symbol_table::*;
 
 pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
     let mut env = SymbolTable::empty();
-    env.add_ident("do", VarKind::Special)
-       .unwrap();
 
-    // TODO: should be core, right?
+    env.add_ident("def", VarKind::Special).unwrap();
+    env.add_ident("do", VarKind::Special).unwrap();
     env.add_ident("+", VarKind::Special).unwrap();
 
     // ////

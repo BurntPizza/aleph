@@ -6,32 +6,60 @@ use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 
 pub type RegisterT = i64;
-
+type Endianness = LittleEndian;
 
 pub fn exec_program(program: Program) -> RegisterT {
     use self::Instruction::*;
 
-    fn pop_usize(ds: &mut Vec<RegisterT>) -> usize {
-        ds.pop().expect("stack underflow") as usize
+    macro_rules! read_u16 {
+        ($instr:ident, $ip:ident) => {{
+            let val = Endianness::read_u16(&$instr[$ip..$ip + 2]);
+            $ip += 2;
+            val
+        }}
+    }
+
+    macro_rules! read_u8 {
+        ($instr:ident, $ip:ident) => {{
+            let val = $instr[$ip];
+            $ip += 1;
+            val
+        }}
+    }
+
+    macro_rules! read_i64 {
+        ($instr:ident, $ip:ident) => {{
+            let val = Endianness::read_i64(&$instr[$ip..$ip + 8]);
+            $ip += 8;
+            val
+        }}
     }
 
     let mut ip = 0; // instruction pointer
     let mut data_stack = Vec::with_capacity(128);
-    // let ret_stack = Vec::with_capacity(128);
+    let mut ret_stack = Vec::with_capacity(128);
+    let mut var_slots = vec![0; program.num_vars];
+    let instructions = program.instructions;
 
     loop {
         let i = ip;
         ip += 1;
-        let instr = as_inst(program.instructions[i]);
+        let instr = as_inst(instructions[i]);
         match instr {
-            LoadConst => {
-                let val = LittleEndian::read_i64(&program.instructions[ip..ip + 8]);
-                ip += 8;
+            ConstI64 => {
+                let val = read_i64!(instructions, ip);
                 data_stack.push(val);
             }
+            Load => {
+                let var_slot = read_u16!(instructions, ip) as usize;
+                data_stack.push(var_slots[var_slot]);
+            }
+            Store => {
+                let var_slot = read_u16!(instructions, ip) as usize;
+                var_slots[var_slot] = data_stack.pop().expect("stack underflow: store");
+            }
             Add => {
-                let num_args = program.instructions[ip] as usize;
-                ip += 1;
+                let num_args = read_u8!(instructions, ip) as usize;
                 assert!(data_stack.len() >= num_args, "stack underflow: add");
                 let idx = data_stack.len() - num_args;
                 let val = data_stack.drain(idx..).fold(0, |acc, e| acc + e);
@@ -40,8 +68,14 @@ pub fn exec_program(program: Program) -> RegisterT {
             Drop => {
                 data_stack.pop().expect("stack underflow: drop");
             }
-            CallSpecial => unimplemented!(),
-            CallNormal => unimplemented!(),
+            Call => {
+                let jmp_addr = read_u16!(instructions, ip) as usize;
+                ret_stack.push(ip);
+                ip = jmp_addr;
+            }
+            Ret => {
+                ip = ret_stack.pop().expect("return stack underflow: ret");
+            }
             Exit => return data_stack.pop().expect("stack underflow: exit"),
         }
     }
@@ -57,6 +91,7 @@ fn as_inst(b: u8) -> Instruction {
 
 pub struct Program {
     instructions: Vec<u8>,
+    num_vars: usize,
 }
 
 pub fn new_program() -> ProgramBuilder {
@@ -64,6 +99,7 @@ pub fn new_program() -> ProgramBuilder {
         fn_cursor: vec![],
         fn_defs: Default::default(),
         instructions: vec![],
+        num_vars: 0,
     }
 }
 
@@ -73,6 +109,7 @@ pub struct ProgramBuilder {
     // var_id -> fn_def
     fn_defs: HashMap<u32, Vec<u8>>,
     instructions: Vec<u8>,
+    num_vars: u16,
 }
 
 macro_rules! current_def {
@@ -94,13 +131,30 @@ impl ProgramBuilder {
         self.fn_cursor.pop();
     }
 
+    pub fn def_var(&mut self) -> u16 {
+        let tmp = self.num_vars;
+        self.num_vars += 1;
+        tmp
+    }
+
+    pub fn load_var(&mut self, var_slot_idx: u16) {
+        assert!(self.num_vars >= var_slot_idx + 1);
+        let def = current_def!(self);
+        def.push(as_byte(Instruction::Load));
+        def.write_u16::<Endianness>(var_slot_idx).unwrap();
+    }
+
+    pub fn store_var(&mut self, var_slot_idx: u16) {
+        assert!(self.num_vars >= var_slot_idx + 1);
+        let def = current_def!(self);
+        def.push(as_byte(Instruction::Store));
+        def.write_u16::<Endianness>(var_slot_idx).unwrap();
+    }
+
     pub fn load_const(&mut self, val: RegisterT) {
         let def = current_def!(self);
-
-        def.push(as_byte(Instruction::LoadConst));
-        let mut tmp = [0; 8];
-        LittleEndian::write_i64(&mut tmp, val);
-        def.extend_from_slice(&tmp);
+        def.push(as_byte(Instruction::ConstI64));
+        def.write_i64::<Endianness>(val).unwrap();
     }
 
     pub fn add(&mut self, num_args: u8) {
@@ -120,23 +174,45 @@ impl ProgramBuilder {
     }
 
     pub fn finish(self) -> Program {
-        Program { instructions: self.instructions }
+        // assemble fn_defs
+        Program {
+            instructions: self.instructions,
+            num_vars: self.num_vars as usize,
+        }
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Instruction {
-    LoadConst,
+    ConstI64,
+    Load,
+    Store,
     Add,
     Drop,
-    CallSpecial,
-    CallNormal,
+    Call,
+    Ret,
     Exit,
 }
+
+
 
 impl Debug for Program {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use self::Instruction::*;
+
+        fn format_inst(idx: usize, i: Instruction, argn: &ToString) -> Option<String> {
+            let mnemonic = match i {
+                ConstI64 => "i64",
+                Load => "load",
+                Store => "stor",
+                Call => "call",
+                Add => "add",
+                Drop => "drop",
+                Exit => "exit",
+                Ret => "ret",
+            };
+            Some(format!("{:>4}:\t{:>4} {:>3}", idx, mnemonic, argn.to_string()))
+        }
 
         let lines = self.instructions
                         .iter()
@@ -145,8 +221,9 @@ impl Debug for Program {
                             match it.next() {
                                 None => None,
                                 Some((idx, &b)) => {
-                                    match as_inst(b) {
-                                        LoadConst => {
+                                    let inst = as_inst(b);
+                                    match inst {
+                                        ConstI64 => {
                                             let mut raw = vec![];
                                             for _ in 0..8 {
                                                 match it.next() {
@@ -156,17 +233,31 @@ impl Debug for Program {
                                                     _ => return None,
                                                 }
                                             }
-                                            let val = LittleEndian::read_i64(&*raw);
-                                            Some(format!("{:>4}:\t ldc {:>3}", idx, val))
+                                            let val = Endianness::read_i64(&*raw);
+                                            format_inst(idx, inst, &val)
                                         }
-                                        Add => {
-                                            Some(format!("{:>4}:\t add {:>3}",
-                                                         idx,
-                                                         it.next().unwrap().1))
+                                        Load => {
+                                            let bytes = [*it.next().unwrap().1,
+                                                         *it.next().unwrap().1];
+                                            let val = Endianness::read_u16(&bytes[..]);
+                                            format_inst(idx, inst, &val)
                                         }
-                                        Exit => Some(format!("{:>4}:\texit", idx)),
-                                        Drop => Some(format!("{:>4}:\tdrop", idx)),
-                                        _ => unimplemented!(),
+                                        Store => {
+                                            let bytes = [*it.next().unwrap().1,
+                                                         *it.next().unwrap().1];
+                                            let val = Endianness::read_u16(&bytes[..]);
+                                            format_inst(idx, inst, &val)
+                                        }
+                                        Call => {
+                                            let bytes = [*it.next().unwrap().1,
+                                                         *it.next().unwrap().1];
+                                            let val = Endianness::read_u16(&bytes[..]);
+                                            format_inst(idx, inst, &val)
+                                        }
+                                        Add => format_inst(idx, inst, it.next().unwrap().1),
+                                        Ret => format_inst(idx, inst, &""),
+                                        Exit => format_inst(idx, inst, &""),
+                                        Drop => format_inst(idx, inst, &""),
                                     }
                                 }
                             }
@@ -183,9 +274,10 @@ mod test {
 
     #[test]
     fn raw_program_addition() {
-        // (+ 1 2 3) == 6
+        // (+ 1 2 3)
 
         let mut p = new_program();
+
         p.load_const(1);
         p.load_const(2);
         p.load_const(3);
@@ -195,5 +287,25 @@ mod test {
         let p = p.finish();
 
         assert_eq!(exec_program(p), 6);
+    }
+
+    #[test]
+    fn var() {
+        // (def x 7)
+        // (+ x 3)
+
+        let mut p = new_program();
+
+        let x = p.def_var();
+        p.load_const(7);
+        p.store_var(x);
+        p.load_const(3);
+        p.load_var(x);
+        p.add(2);
+        p.exit();
+
+        let p = p.finish();
+
+        assert_eq!(exec_program(p), 10);
     }
 }

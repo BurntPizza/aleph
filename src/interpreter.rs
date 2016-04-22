@@ -61,6 +61,15 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
         emit(last, env, p)
     }
 
+    fn emit_def(p: &mut ProgramBuilder,
+                env: &SymbolTable,
+                var_record: &Record,
+                args: &[AstNode])
+                -> Result<(), Box<Error>> {
+        //
+        unimplemented!()
+    }
+
     fn emit_inv(p: &mut ProgramBuilder,
                 callee: &AstNode,
                 args: &[AstNode],
@@ -80,6 +89,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
                     }
                     VarKind::Special => {
                         match var_record.ident() {
+                            "def" => emit_def(p, env, var_record, args),
                             "do" => emit_do(p, env, args),
                             "+" => {
                                 assert!(args.len() < 256);
@@ -90,7 +100,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
 
                                 p.add(args.len() as u8);
                                 Ok(())
-                            } 
+                            }
                             _ => unimplemented!(),
                         }
                     }
