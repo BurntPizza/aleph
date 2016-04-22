@@ -5,6 +5,8 @@ use byteorder::*;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 
+use symbol_table::*;
+
 pub type RegisterT = i64;
 type Endianness = LittleEndian;
 
@@ -97,13 +99,16 @@ fn as_inst(b: u8) -> Instruction {
 pub struct Program {
     instructions: Vec<u8>,
     num_vars: usize,
+    debug_info: DebugInfo,
 }
 
 pub fn new_program() -> ProgramBuilder {
     ProgramBuilder {
+        in_prologue: false,
         fn_cursor: vec![],
         fn_defs: Default::default(),
         constants: Default::default(),
+        prologue: vec![],
         instructions: vec![],
         var_defs: Default::default(),
     }
@@ -111,6 +116,7 @@ pub fn new_program() -> ProgramBuilder {
 
 
 // preliminary instructions
+// essentially assembler macros
 #[derive(Debug)]
 enum PIns {
     I64(i64),
@@ -125,37 +131,53 @@ enum PIns {
     LoadFnAddrPlaceholder(u32),
     // fn_id
     FnHeaderPlaceholder(u32),
+    PrologueEnd,
 }
 
 macro_rules! current_def {
     ($e:ident) => {
-        match $e.fn_cursor.len() {
+        if $e.in_prologue { 
+            &mut $e.prologue
+        } else {
+            match $e.fn_cursor.len() {
             0 => &mut $e.instructions,
-            n => $e.fn_defs.get_mut(&$e.fn_cursor[n - 1]).unwrap(),
+                n => $e.fn_defs.get_mut(&$e.fn_cursor[n - 1]).unwrap(),
+            }
         }
     }
 }
 
+
 pub struct ProgramBuilder {
+    in_prologue: bool,
     // stack of fn_ids
     fn_cursor: Vec<u32>,
     // fn_id -> fn_def
     fn_defs: HashMap<u32, Vec<PIns>>,
     constants: HashMap<u32, i64>,
+    prologue: Vec<PIns>,
     instructions: Vec<PIns>,
     // var_ast_id -> var_slot_idx
     var_defs: HashMap<u32, u16>,
 }
 
 impl ProgramBuilder {
-    pub fn begin_fn_def(&mut self, id: u32) {
-        self.fn_defs.insert(id, vec![PIns::FnHeaderPlaceholder(id)]);
-        self.fn_cursor.push(id);
+    pub fn in_prologue(&mut self) {
+        self.in_prologue = true;
+    }
+
+    pub fn out_prologue(&mut self) {
+        self.in_prologue = false;
+    }
+
+    pub fn begin_fn_def(&mut self, fn_id: u32) {
+        self.fn_defs.insert(fn_id, vec![PIns::FnHeaderPlaceholder(fn_id)]);
+        self.fn_cursor.push(fn_id);
     }
 
     pub fn end_fn_def(&mut self) {
         let fn_id = self.fn_cursor.pop().unwrap();
-        current_def!(self).push(PIns::LoadFnAddrPlaceholder(fn_id));
+        self.prologue.push(PIns::LoadFnAddrPlaceholder(fn_id));
     }
 
     pub fn def_const(&mut self, var_ast_id: u32, val: i64) {
@@ -208,10 +230,12 @@ impl ProgramBuilder {
         current_def!(self).push(PIns::Exit);
     }
 
-    pub fn finish(self) -> Program {
+    pub fn finish(mut self, env: &SymbolTable) -> Program {
         use self::PIns::*;
 
         let fn_addr_load_placeholder = 255;
+        let mut prologue_len = None;
+        self.prologue.push(PrologueEnd);
 
         // fn_id -> call addr
         let mut fn_addrs: HashMap<u32, u16> = HashMap::new();
@@ -220,7 +244,8 @@ impl ProgramBuilder {
         let mut callsites_to_link = HashMap::new();
         let mut assembled = vec![];
 
-        let itr = ::std::iter::once((::std::u32::MAX, self.instructions))
+        let itr = ::std::iter::once((::std::u32::MAX, self.prologue))
+                      .chain(::std::iter::once((::std::u32::MAX, self.instructions)))
                       .chain(self.fn_defs.into_iter())
                       .flat_map(|(_, instructions)| instructions.into_iter());
 
@@ -247,12 +272,16 @@ impl ProgramBuilder {
                 Ret => assembled.push(as_byte(Instruction::Ret)),
                 Exit => assembled.push(as_byte(Instruction::Exit)),
                 LoadFnAddrPlaceholder(fn_id) => {
-                    callsites_to_link.insert(fn_id, assembled.len());
+                    let current_position = assembled.len();
+                    callsites_to_link.insert(fn_id, current_position);
                     assembled.push(fn_addr_load_placeholder);
                     assembled.write_u16::<Endianness>(0).unwrap();
                 }
                 FnHeaderPlaceholder(fn_id) => {
                     fn_addrs.insert(fn_id, assembled.len() as u16);
+                }
+                PrologueEnd => {
+                    prologue_len = Some(assembled.len() as u16);
                 }
             }
         }
@@ -263,9 +292,30 @@ impl ProgramBuilder {
             Endianness::write_u16(&mut assembled[idx + 1..idx + 3], fn_addr);
         }
 
+        // debug info
+
+        let var_names = self.var_defs
+                            .iter()
+                            .map(|(&var_id, &var_addr)| {
+                                (var_addr,
+                                 env.lookup_id(var_id)
+                                    .map_or_else(|| format!("<var {}>", var_id),
+                                                 |r| r.ident().into()))
+                            })
+                            .collect();
+
+        let labels = fn_addrs.iter()
+                             .map(|(_, &fn_addr)| (fn_addr, format!("L{}", fn_addr)))
+                             .chain(::std::iter::once((prologue_len.unwrap(), format!("main"))))
+                             .collect();
+
         Program {
             instructions: assembled,
             num_vars: self.var_defs.len(),
+            debug_info: DebugInfo {
+                var_names: var_names,
+                labels: labels,
+            },
         }
     }
 }
@@ -284,12 +334,23 @@ enum Instruction {
 }
 
 
+#[derive(Default)]
+struct DebugInfo {
+    // fn_addr -> name
+    labels: HashMap<u16, String>,
+    // var_slot_idx -> name
+    var_names: HashMap<u16, String>,
+}
 
 impl Debug for Program {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use self::Instruction::*;
 
-        fn format_inst(idx: usize, i: Instruction, argn: &ToString) -> Option<String> {
+        fn format_inst(label: Option<&str>,
+                       idx: usize,
+                       i: Instruction,
+                       args: &ToString)
+                       -> Option<String> {
             let mnemonic = match i {
                 I64 => "i64",
                 U16 => "u16",
@@ -301,7 +362,13 @@ impl Debug for Program {
                 Exit => "exit",
                 Ret => "ret",
             };
-            Some(format!("{:>4}:\t{:>4} {:>3}", idx, mnemonic, argn.to_string()))
+
+            let label = match label {
+                Some(s) => format!("{}:\n", s),
+                None => "".into(),
+            };
+
+            Some(format!("{}{:>6}:\t{:>4} {}", label, idx, mnemonic, args.to_string()))
         }
 
         let lines = self.instructions
@@ -311,7 +378,15 @@ impl Debug for Program {
                             match it.next() {
                                 None => None,
                                 Some((idx, &b)) => {
+                                    let label = match self.debug_info
+                                                          .labels
+                                                          .get(&(idx as u16)) {
+                                        Some(name) => Some(&**name),
+                                        _ => None,
+                                    };
+
                                     let inst = as_inst(b);
+
                                     match inst {
                                         I64 => {
                                             let mut raw = vec![];
@@ -324,7 +399,7 @@ impl Debug for Program {
                                                 }
                                             }
                                             let val = Endianness::read_i64(&*raw);
-                                            format_inst(idx, inst, &val)
+                                            format_inst(label, idx, inst, &val)
                                         }
                                         U16 => {
                                             let mut raw = vec![];
@@ -337,25 +412,27 @@ impl Debug for Program {
                                                 }
                                             }
                                             let val = Endianness::read_u16(&*raw);
-                                            format_inst(idx, inst, &val)
+                                            format_inst(label, idx, inst, &val)
                                         }
                                         Load => {
                                             let bytes = [*it.next().unwrap().1,
                                                          *it.next().unwrap().1];
-                                            let val = Endianness::read_u16(&bytes[..]);
-                                            format_inst(idx, inst, &val)
+                                            let var_slot_idx = Endianness::read_u16(&bytes[..]);
+                                            let name = &self.debug_info.var_names[&var_slot_idx];
+                                            format_inst(label, idx, inst, name)
                                         }
                                         Store => {
                                             let bytes = [*it.next().unwrap().1,
                                                          *it.next().unwrap().1];
-                                            let val = Endianness::read_u16(&bytes[..]);
-                                            format_inst(idx, inst, &val)
+                                            let var_slot_idx = Endianness::read_u16(&bytes[..]);
+                                            let name = &self.debug_info.var_names[&var_slot_idx];
+                                            format_inst(label, idx, inst, name)
                                         }
-                                        Call => format_inst(idx, inst, &""),
-                                        Add => format_inst(idx, inst, it.next().unwrap().1),
-                                        Ret => format_inst(idx, inst, &""),
-                                        Exit => format_inst(idx, inst, &""),
-                                        Pop => format_inst(idx, inst, &""),
+                                        Call => format_inst(label, idx, inst, &""),
+                                        Add => format_inst(label, idx, inst, it.next().unwrap().1),
+                                        Ret => format_inst(label, idx, inst, &""),
+                                        Exit => format_inst(label, idx, inst, &""),
+                                        Pop => format_inst(label, idx, inst, &""),
                                     }
                                 }
                             }
@@ -369,6 +446,7 @@ impl Debug for Program {
 #[cfg(test)]
 mod test {
     use super::*;
+    use symbol_table::*;
 
     #[test]
     fn raw_program_addition() {
@@ -382,7 +460,7 @@ mod test {
         p.add(3);
         p.exit();
 
-        let p = p.finish();
+        let p = p.finish(&SymbolTable::empty());
         println!("{:?}", p);
         assert_eq!(exec_program(p), 6);
     }
@@ -403,7 +481,7 @@ mod test {
         p.add(2);
         p.exit();
 
-        let p = p.finish();
+        let p = p.finish(&SymbolTable::empty());
         println!("{:?}", p);
         assert_eq!(exec_program(p), 10);
     }

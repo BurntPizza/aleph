@@ -78,23 +78,32 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
                 -> Result<bool, Box<Error>> {
         assert_eq!(args.len(), 2);
 
-        match args[0] {
-            AstNode::Var(id) => {
-                match args[1] {
+        let var = &args[0];
+        let val = &args[1];
+
+        match *var {
+            AstNode::Var(var_id) => {
+                match *val {
                     AstNode::Const(val) => {
-                        p.def_var(id);
+                        p.in_prologue();
                         p.load_i64(val);
-                        p.store_var(id);
+                        p.def_var(var_id);
+                        p.store_var(var_id);
+                        p.out_prologue();
                     }
                     AstNode::Var(val_id) => {
-                        p.def_var(id);
+                        p.in_prologue();
                         p.load_var(val_id);
-                        p.store_var(id);
+                        p.def_var(var_id);
+                        p.store_var(var_id);
+                        p.out_prologue();
                     }
                     AstNode::Inv(ref callee, ref args) => {
-                        p.def_var(id);
                         emit_inv(p, callee, args, env).unwrap();
-                        p.store_var(id);
+                        p.in_prologue();
+                        p.def_var(var_id);
+                        p.store_var(var_id);
+                        p.out_prologue();
                     }
                 }
             }
@@ -139,6 +148,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
                 }
             }
         }
+
 
         // emit body, wrapped in `do` form
         try!(emit_do(p, env, body));
@@ -205,6 +215,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
         }
     }
 
+    // TODO: lift defs to top-level
     fn emit(node: &AstNode, env: &SymbolTable, p: &mut ProgramBuilder) -> Result<bool, Box<Error>> {
         match *node {
             AstNode::Const(val) => emit_const(p, val),
@@ -218,7 +229,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
             "nothing will be on the stack");
     program.exit();
 
-    let program = program.finish();
+    let program = program.finish(input.env());
 
     println!("Program: {:?}", program);
     Ok(program)
@@ -261,5 +272,15 @@ mod test {
     #[test]
     fn def_fn() {
         assert_eq!(interpret("(def f (fn (x) (+ 1 x x))) (f 7)"), "15");
+    }
+
+    #[test]
+    fn nested_def_fn() {
+        assert_eq!(interpret("(def quadruple (fn (x) \
+                                               (def double (fn (y) \
+                                                             (+ y y))) \
+                                               (+ (double x) (double x)))) \
+                              (quadruple 7)"),
+                   "28");
     }
 }
