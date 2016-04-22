@@ -80,20 +80,26 @@ impl Record {
     }
 }
 
-pub enum VarKind {
-    // builtins
-    FnSpecial,
-    // user-defined
-    FnNormal,
-    Constant,
+// TODO function ref?
+custom_derive! {
+    #[derive(IterVariantNames(VarKindVariantNames))]
+    pub enum VarKind {
+        // builtins
+        SpecialFn,
+        // user-defined
+        NormalFn,
+        Var,
+        Constant,
+    }
 }
 
 impl Debug for VarKind {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let string = match *self {
-            VarKind::FnNormal => "Normal",
-            VarKind::FnSpecial => "Special",
+            VarKind::NormalFn => "NormalFn",
+            VarKind::SpecialFn => "SpecialFn",
             VarKind::Constant => "Constant",
+            VarKind::Var => "Var",
         };
 
         write!(f, "{}", string)
@@ -120,7 +126,7 @@ impl Debug for SymbolTable {
         let ident_size = cmp::max("ident".len(),
                                   records.iter().map(|r| r.ident().len()).max().unwrap_or(0));
 
-        let var_kind_size = "special".len();
+        let var_kind_size: usize = VarKind::iter_variant_names().map(|s| s.len()).max().unwrap();
 
         let header = format!("| {:^3$} | {:^4$} | {:^5$} |",
                              "id",
@@ -142,9 +148,10 @@ impl Debug for SymbolTable {
 
         for r in records {
             let r_kind = match r.kind {
-                VarKind::FnNormal => "normal",
-                VarKind::FnSpecial => "special",
+                VarKind::NormalFn => "normal",
+                VarKind::SpecialFn => "special",
                 VarKind::Constant => "constant",
+                VarKind::Var => "var",
             };
 
             let out = format!("| {:>3$} | {:>4$} | {:>5$} |",

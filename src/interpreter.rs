@@ -1,5 +1,6 @@
 
 use std::error::Error;
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use reader::{self, Form, InputStream};
 use analyzer::{self, Analysis, AstNode};
@@ -47,11 +48,11 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
         let var_record = env.lookup_id(var_id).unwrap();
 
         match *var_record.kind() {
-            VarKind::Constant => {
-                p.load_named_constant(var_id);
+            VarKind::Var => {
+                p.load_var(var_id);
                 Ok(true)
             }
-            _ => Ok(false),
+            _ => unimplemented!(),
         }
     }
 
@@ -67,6 +68,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
                 p.pop();
             }
         }
+
         emit(last, env, p)
     }
 
@@ -80,15 +82,70 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
             AstNode::Var(id) => {
                 match args[1] {
                     AstNode::Const(val) => {
-                        p.def_const(id, val);
+                        p.def_var(id);
+                        p.load_i64(val);
+                        p.store_var(id);
                     }
-                    _ => unimplemented!(),
+                    AstNode::Var(val_id) => {
+                        p.def_var(id);
+                        p.load_var(val_id);
+                        p.store_var(id);
+                    }
+                    AstNode::Inv(ref callee, ref args) => {
+                        p.def_var(id);
+                        emit_inv(p, callee, args, env).unwrap();
+                        p.store_var(id);
+                    }
                 }
             }
             _ => return Err("1st arg of `def` must be a var".into()),
         }
 
         Ok(false) // def never puts anything on the stack (TODO: nil?)
+    }
+
+    fn emit_fn(p: &mut ProgramBuilder,
+               env: &SymbolTable,
+               args: &[AstNode])
+               -> Result<bool, Box<Error>> {
+
+        fn next_fn_id() -> u32 {
+            static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+
+            COUNTER.fetch_add(1, Ordering::SeqCst) as u32
+        }
+
+        assert!(args.len() > 1);
+        let (arg_list, body) = args.split_first().unwrap();
+
+        match *arg_list {
+            AstNode::Inv(..) => {}
+            _ => return Err("Malformed argument list".into()),
+        }
+
+        // return ref to function? (addr?)
+        let id = next_fn_id();
+        p.begin_fn_def(id);
+
+        // emit param marshalling header
+        if let AstNode::Inv(ref callee, ref args) = *arg_list {
+            for arg in ::std::iter::once(&**callee).chain(args.iter()) {
+                match *arg {
+                    AstNode::Var(arg_id) => {
+                        p.def_var(arg_id);
+                        p.store_var(arg_id);
+                    }
+                    _ => return Err("Argument lists may only contain vars".into()),
+                }
+            }
+        }
+
+        // emit body, wrapped in `do` form
+        try!(emit_do(p, env, body));
+        p.ret();
+
+        p.end_fn_def();
+        Ok(true)
     }
 
     fn emit_inv(p: &mut ProgramBuilder,
@@ -102,15 +159,26 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
             AstNode::Var(id) => {
                 let var_record = env.lookup_id(id).unwrap();
                 match *var_record.kind() {
-                    VarKind::FnNormal => {
+                    VarKind::Var => {
                         for arg in args {
                             try!(emit(arg, env, p));
                         }
-                        emit(callee, env, p)
+
+                        p.load_var(id);
+                        p.call();
+                        Ok(true) // TODO: not all fns return a value
                     }
-                    VarKind::FnSpecial => {
+                    VarKind::NormalFn => {
+                        unimplemented!();
+                        // for arg in args {
+                        //     try!(emit(arg, env, p));
+                        // }
+                        // emit(callee, env, p)
+                    }
+                    VarKind::SpecialFn => {
                         match var_record.ident() {
                             "def" => emit_def(p, env, args),
+                            "fn" => emit_fn(p, env, args),
                             "do" => emit_do(p, env, args),
                             "+" => {
                                 assert!(args.len() < 256);
@@ -183,5 +251,15 @@ mod test {
     #[test]
     fn add_const_vars() {
         assert_eq!(interpret("(def x 3) (def y 4) (+ x 7 y)"), "14");
+    }
+
+    #[test]
+    fn copy_var() {
+        assert_eq!(interpret("(def x 3) (def y x) y"), "3");
+    }
+
+    #[test]
+    fn def_fn() {
+        assert_eq!(interpret("(def f (fn (x) (+ 1 x x))) (f 7)"), "15");
     }
 }

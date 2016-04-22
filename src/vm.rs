@@ -46,9 +46,13 @@ pub fn exec_program(program: Program) -> RegisterT {
         ip += 1;
         let instr = as_inst(instructions[i]);
         match instr {
-            ConstI64 => {
+            I64 => {
                 let val = read_i64!(instructions, ip);
                 data_stack.push(val);
+            }
+            U16 => {
+                let val = read_u16!(instructions, ip);
+                data_stack.push(val as RegisterT);
             }
             Load => {
                 let var_slot = read_u16!(instructions, ip) as usize;
@@ -69,7 +73,8 @@ pub fn exec_program(program: Program) -> RegisterT {
                 data_stack.pop().expect("stack underflow: pop");
             }
             Call => {
-                let jmp_addr = read_u16!(instructions, ip) as usize;
+                let jmp_addr = data_stack.pop().expect("stack underflow: call") as usize;
+                assert!(jmp_addr <= ::std::u16::MAX as usize);
                 ret_stack.push(ip);
                 ip = jmp_addr;
             }
@@ -100,30 +105,26 @@ pub fn new_program() -> ProgramBuilder {
         fn_defs: Default::default(),
         constants: Default::default(),
         instructions: vec![],
-        num_vars: 0,
+        var_defs: Default::default(),
     }
 }
 
-pub struct ProgramBuilder {
-    // stack of ids
-    fn_cursor: Vec<u32>,
-    // var_id -> fn_def
-    fn_defs: HashMap<u32, Vec<PIns>>,
-    constants: HashMap<u32, i64>,
-    instructions: Vec<PIns>,
-    num_vars: u16,
-}
 
 // preliminary instructions
+#[derive(Debug)]
 enum PIns {
     I64(i64),
     Load(u16),
     Store(u16),
     Add(u8),
     Pop,
-    Call(u16),
+    Call,
     Ret,
     Exit,
+    // fn_id
+    LoadFnAddrPlaceholder(u32),
+    // fn_id
+    FnHeaderPlaceholder(u32),
 }
 
 macro_rules! current_def {
@@ -135,32 +136,43 @@ macro_rules! current_def {
     }
 }
 
+pub struct ProgramBuilder {
+    // stack of fn_ids
+    fn_cursor: Vec<u32>,
+    // fn_id -> fn_def
+    fn_defs: HashMap<u32, Vec<PIns>>,
+    constants: HashMap<u32, i64>,
+    instructions: Vec<PIns>,
+    // var_ast_id -> var_slot_idx
+    var_defs: HashMap<u32, u16>,
+}
+
 impl ProgramBuilder {
     pub fn begin_fn_def(&mut self, id: u32) {
-        self.fn_defs.insert(id, vec![]);
+        self.fn_defs.insert(id, vec![PIns::FnHeaderPlaceholder(id)]);
         self.fn_cursor.push(id);
     }
 
     pub fn end_fn_def(&mut self) {
-        self.fn_cursor.pop().unwrap();
+        let fn_id = self.fn_cursor.pop().unwrap();
+        current_def!(self).push(PIns::LoadFnAddrPlaceholder(fn_id));
     }
 
     pub fn def_const(&mut self, var_ast_id: u32, val: i64) {
         self.constants.insert(var_ast_id, val);
     }
 
-    pub fn call(&mut self, jmp_addr: u16) {
-        current_def!(self).push(PIns::Call(jmp_addr));
+    pub fn call(&mut self) {
+        current_def!(self).push(PIns::Call);
     }
 
     pub fn ret(&mut self) {
         current_def!(self).push(PIns::Ret);
     }
 
-    pub fn fresh_var_idx(&mut self) -> u16 {
-        let tmp = self.num_vars;
-        self.num_vars += 1;
-        tmp
+    pub fn def_var(&mut self, var_ast_id: u32) {
+        let new_idx = self.var_defs.len();
+        self.var_defs.insert(var_ast_id, new_idx as u16);
     }
 
     pub fn load_named_constant(&mut self, constant_ast_id: u32) {
@@ -168,13 +180,15 @@ impl ProgramBuilder {
         self.load_i64(val);
     }
 
-    pub fn load_var(&mut self, var_slot_idx: u16) {
-        assert!(self.num_vars >= var_slot_idx + 1);
+    pub fn load_var(&mut self, var_ast_id: u32) {
+        let var_slot_idx = self.var_defs[&var_ast_id];
+        assert!(self.var_defs.len() >= var_slot_idx as usize + 1);
         current_def!(self).push(PIns::Load(var_slot_idx));
     }
 
-    pub fn store_var(&mut self, var_slot_idx: u16) {
-        assert!(self.num_vars >= var_slot_idx + 1);
+    pub fn store_var(&mut self, var_ast_id: u32) {
+        let var_slot_idx = self.var_defs[&var_ast_id];
+        assert!(self.var_defs.len() >= var_slot_idx as usize + 1);
         current_def!(self).push(PIns::Store(var_slot_idx));
     }
 
@@ -197,12 +211,23 @@ impl ProgramBuilder {
     pub fn finish(self) -> Program {
         use self::PIns::*;
 
+        let fn_addr_load_placeholder = 255;
+
+        // fn_id -> call addr
+        let mut fn_addrs: HashMap<u32, u16> = HashMap::new();
+
+        // fn_id -> addr to write in fn_load
+        let mut callsites_to_link = HashMap::new();
         let mut assembled = vec![];
 
-        for pin in self.instructions {
+        let itr = ::std::iter::once((::std::u32::MAX, self.instructions))
+                      .chain(self.fn_defs.into_iter())
+                      .flat_map(|(_, instructions)| instructions.into_iter());
+
+        for pin in itr {
             match pin {
                 I64(val) => {
-                    assembled.push(as_byte(Instruction::ConstI64));
+                    assembled.push(as_byte(Instruction::I64));
                     assembled.write_i64::<Endianness>(val).unwrap();
                 }
                 Load(var_slot_idx) => {
@@ -218,25 +243,37 @@ impl ProgramBuilder {
                     assembled.push(num_args);
                 }
                 Pop => assembled.push(as_byte(Instruction::Pop)),
-                Call(jmp_addr) => {
-                    assembled.push(as_byte(Instruction::Call));
-                    assembled.write_u16::<Endianness>(jmp_addr).unwrap();
-                }
+                Call => assembled.push(as_byte(Instruction::Call)),
                 Ret => assembled.push(as_byte(Instruction::Ret)),
                 Exit => assembled.push(as_byte(Instruction::Exit)),
+                LoadFnAddrPlaceholder(fn_id) => {
+                    callsites_to_link.insert(fn_id, assembled.len());
+                    assembled.push(fn_addr_load_placeholder);
+                    assembled.write_u16::<Endianness>(0).unwrap();
+                }
+                FnHeaderPlaceholder(fn_id) => {
+                    fn_addrs.insert(fn_id, assembled.len() as u16);
+                }
             }
+        }
+
+        for (fn_id, idx) in callsites_to_link {
+            let fn_addr = fn_addrs[&fn_id];
+            assembled[idx] = as_byte(Instruction::U16);
+            Endianness::write_u16(&mut assembled[idx + 1..idx + 3], fn_addr);
         }
 
         Program {
             instructions: assembled,
-            num_vars: self.num_vars as usize,
+            num_vars: self.var_defs.len(),
         }
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Instruction {
-    ConstI64,
+    I64,
+    U16,
     Load,
     Store,
     Add,
@@ -254,7 +291,8 @@ impl Debug for Program {
 
         fn format_inst(idx: usize, i: Instruction, argn: &ToString) -> Option<String> {
             let mnemonic = match i {
-                ConstI64 => "i64",
+                I64 => "i64",
+                U16 => "u16",
                 Load => "load",
                 Store => "stor",
                 Call => "call",
@@ -275,7 +313,7 @@ impl Debug for Program {
                                 Some((idx, &b)) => {
                                     let inst = as_inst(b);
                                     match inst {
-                                        ConstI64 => {
+                                        I64 => {
                                             let mut raw = vec![];
                                             for _ in 0..8 {
                                                 match it.next() {
@@ -286,6 +324,19 @@ impl Debug for Program {
                                                 }
                                             }
                                             let val = Endianness::read_i64(&*raw);
+                                            format_inst(idx, inst, &val)
+                                        }
+                                        U16 => {
+                                            let mut raw = vec![];
+                                            for _ in 0..2 {
+                                                match it.next() {
+                                                    Some((_, &b)) => {
+                                                        raw.push(b);
+                                                    }
+                                                    _ => return None,
+                                                }
+                                            }
+                                            let val = Endianness::read_u16(&*raw);
                                             format_inst(idx, inst, &val)
                                         }
                                         Load => {
@@ -300,12 +351,7 @@ impl Debug for Program {
                                             let val = Endianness::read_u16(&bytes[..]);
                                             format_inst(idx, inst, &val)
                                         }
-                                        Call => {
-                                            let bytes = [*it.next().unwrap().1,
-                                                         *it.next().unwrap().1];
-                                            let val = Endianness::read_u16(&bytes[..]);
-                                            format_inst(idx, inst, &val)
-                                        }
+                                        Call => format_inst(idx, inst, &""),
                                         Add => format_inst(idx, inst, it.next().unwrap().1),
                                         Ret => format_inst(idx, inst, &""),
                                         Exit => format_inst(idx, inst, &""),
@@ -337,7 +383,7 @@ mod test {
         p.exit();
 
         let p = p.finish();
-
+        println!("{:?}", p);
         assert_eq!(exec_program(p), 6);
     }
 
@@ -348,7 +394,8 @@ mod test {
 
         let mut p = new_program();
 
-        let x = p.fresh_var_idx();
+        let x = 0; // 'ast' id, not slot number or value
+        p.def_var(x);
         p.load_i64(7);
         p.store_var(x);
         p.load_i64(3);
@@ -357,32 +404,33 @@ mod test {
         p.exit();
 
         let p = p.finish();
-
+        println!("{:?}", p);
         assert_eq!(exec_program(p), 10);
     }
 
-    #[test]
-    fn calls() {
-        // (defn f [x]
-        //   (+ 2 x))
-        // (defn g [x]
-        //   (f x))
-        // (g (f 4))
+    // TODO: static calls
+    // #[test]
+    // fn calls() {
+    //     // (defn f [x]
+    //     //   (+ 2 x))
+    //     // (defn g [x]
+    //     //   (f x))
+    //     // (g (f 4))
 
-        let mut p = new_program();
+    // let mut p = new_program();
 
-        p.load_i64(4);
-        p.call(16);
-        p.call(28);
-        p.exit();
-        p.load_i64(2); // addr 16
-        p.add(2);
-        p.ret();
-        p.call(16); // addr 28
-        p.ret();
+    //     p.load_i64(4);
+    //     p.call(16);
+    //     p.call(28);
+    //     p.exit();
+    //     p.load_i64(2); // addr 16
+    //     p.add(2);
+    //     p.ret();
+    //     p.call(16); // addr 28
+    //     p.ret();
 
-        let p = p.finish();
-
-        assert_eq!(exec_program(p), 8);
-    }
+    //     let p = p.finish();
+    //     println!("{:?}", p);
+    //     assert_eq!(exec_program(p), 8);
+    // }
 }

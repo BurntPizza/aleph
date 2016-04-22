@@ -8,9 +8,10 @@ use symbol_table::*;
 pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
     let mut env = SymbolTable::empty();
 
-    env.add_ident("def", VarKind::FnSpecial).unwrap();
-    env.add_ident("do", VarKind::FnSpecial).unwrap();
-    env.add_ident("+", VarKind::FnSpecial).unwrap();
+    env.add_ident("def", VarKind::SpecialFn).unwrap();
+    env.add_ident("fn", VarKind::SpecialFn).unwrap();
+    env.add_ident("do", VarKind::SpecialFn).unwrap();
+    env.add_ident("+", VarKind::SpecialFn).unwrap();
 
     // ////
 
@@ -38,6 +39,7 @@ pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
     Ok(analysis)
 }
 
+#[allow(option_map_unwrap_or_else)] // map_or_else has lifetime problems in this case
 fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, AnalyzerError> {
     match *form {
         Form::Atom(ref s) => {
@@ -50,7 +52,7 @@ fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, Analyze
                     let id = env.lookup_ident(text)
                                 .map(Record::id)
                                 .unwrap_or_else(|| {
-                                    env.add_ident(text, VarKind::Constant)
+                                    env.add_ident(text, VarKind::Var)
                                        .unwrap()
                                        .id()
                                 });

@@ -9,6 +9,10 @@
 extern crate itertools;
 extern crate hamt;
 extern crate byteorder;
+#[macro_use]
+extern crate custom_derive;
+#[macro_use]
+extern crate enum_derive;
 
 pub mod symbol_table;
 pub mod core;

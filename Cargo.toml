@@ -13,6 +13,8 @@ name = "aleph"
 doc = false
 
 [dependencies]
+custom_derive = "0.1"
+enum_derive = "0.1"
 byteorder = "0.5"
 itertools = "0.4"
 clap = "^2"
