@@ -98,6 +98,7 @@ pub fn new_program() -> ProgramBuilder {
     ProgramBuilder {
         fn_cursor: vec![],
         fn_defs: Default::default(),
+        constants: Default::default(),
         instructions: vec![],
         num_vars: 0,
     }
@@ -107,9 +108,22 @@ pub struct ProgramBuilder {
     // stack of ids
     fn_cursor: Vec<u32>,
     // var_id -> fn_def
-    fn_defs: HashMap<u32, Vec<u8>>,
-    instructions: Vec<u8>,
+    fn_defs: HashMap<u32, Vec<PIns>>,
+    constants: HashMap<u32, i64>,
+    instructions: Vec<PIns>,
     num_vars: u16,
+}
+
+// preliminary instructions
+enum PIns {
+    I64(i64),
+    Load(u16),
+    Store(u16),
+    Add(u8),
+    Drop,
+    Call(u16),
+    Ret,
+    Exit,
 }
 
 macro_rules! current_def {
@@ -131,18 +145,19 @@ impl ProgramBuilder {
         self.fn_cursor.pop().unwrap();
     }
 
+    pub fn def_const(&mut self, var_ast_id: u32, val: i64) {
+        self.constants.insert(var_ast_id, val);
+    }
+
     pub fn call(&mut self, jmp_addr: u16) {
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::Call));
-        def.write_u16::<Endianness>(jmp_addr).unwrap();
+        current_def!(self).push(PIns::Call(jmp_addr));
     }
 
     pub fn ret(&mut self) {
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::Ret));
+        current_def!(self).push(PIns::Ret);
     }
 
-    pub fn def_var(&mut self) -> u16 {
+    pub fn fresh_var_idx(&mut self) -> u16 {
         let tmp = self.num_vars;
         self.num_vars += 1;
         tmp
@@ -150,44 +165,65 @@ impl ProgramBuilder {
 
     pub fn load_var(&mut self, var_slot_idx: u16) {
         assert!(self.num_vars >= var_slot_idx + 1);
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::Load));
-        def.write_u16::<Endianness>(var_slot_idx).unwrap();
+        current_def!(self).push(PIns::Load(var_slot_idx));
     }
 
     pub fn store_var(&mut self, var_slot_idx: u16) {
         assert!(self.num_vars >= var_slot_idx + 1);
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::Store));
-        def.write_u16::<Endianness>(var_slot_idx).unwrap();
+        current_def!(self).push(PIns::Store(var_slot_idx));
     }
 
     pub fn load_const(&mut self, val: RegisterT) {
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::ConstI64));
-        def.write_i64::<Endianness>(val).unwrap();
+        current_def!(self).push(PIns::I64(val));
     }
 
     pub fn add(&mut self, num_args: u8) {
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::Add));
-        def.push(num_args);
+        current_def!(self).push(PIns::Add(num_args));
     }
 
     pub fn drop(&mut self) {
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::Drop));
+        current_def!(self).push(PIns::Drop);
     }
 
     pub fn exit(&mut self) {
-        let def = current_def!(self);
-        def.push(as_byte(Instruction::Exit));
+        current_def!(self).push(PIns::Exit);
     }
 
     pub fn finish(self) -> Program {
-        // assemble fn_defs
+        use self::PIns::*;
+
+        let mut assembled = vec![];
+
+        for pin in self.instructions {
+            match pin {
+                I64(val) => {
+                    assembled.push(as_byte(Instruction::ConstI64));
+                    assembled.write_i64::<Endianness>(val).unwrap();
+                }
+                Load(var_slot_idx) => {
+                    assembled.push(as_byte(Instruction::Load));
+                    assembled.write_u16::<Endianness>(var_slot_idx).unwrap();
+                }
+                Store(var_slot_idx) => {
+                    assembled.push(as_byte(Instruction::Store));
+                    assembled.write_u16::<Endianness>(var_slot_idx).unwrap();
+                }
+                Add(num_args) => {
+                    assembled.push(as_byte(Instruction::Add));
+                    assembled.push(num_args);
+                }
+                Drop => assembled.push(as_byte(Instruction::Drop)),
+                Call(jmp_addr) => {
+                    assembled.push(as_byte(Instruction::Call));
+                    assembled.write_u16::<Endianness>(jmp_addr).unwrap();
+                }
+                Ret => assembled.push(as_byte(Instruction::Ret)),
+                Exit => assembled.push(as_byte(Instruction::Exit)),
+            }
+        }
+
         Program {
-            instructions: self.instructions,
+            instructions: assembled,
             num_vars: self.num_vars as usize,
         }
     }
@@ -307,7 +343,7 @@ mod test {
 
         let mut p = new_program();
 
-        let x = p.def_var();
+        let x = p.fresh_var_idx();
         p.load_const(7);
         p.store_var(x);
         p.load_const(3);
