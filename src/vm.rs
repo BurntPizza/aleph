@@ -65,8 +65,8 @@ pub fn exec_program(program: Program) -> RegisterT {
                 let val = data_stack.drain(idx..).fold(0, |acc, e| acc + e);
                 data_stack.push(val);
             }
-            Drop => {
-                data_stack.pop().expect("stack underflow: drop");
+            Pop => {
+                data_stack.pop().expect("stack underflow: pop");
             }
             Call => {
                 let jmp_addr = read_u16!(instructions, ip) as usize;
@@ -120,7 +120,7 @@ enum PIns {
     Load(u16),
     Store(u16),
     Add(u8),
-    Drop,
+    Pop,
     Call(u16),
     Ret,
     Exit,
@@ -186,8 +186,8 @@ impl ProgramBuilder {
         current_def!(self).push(PIns::Add(num_args));
     }
 
-    pub fn drop(&mut self) {
-        current_def!(self).push(PIns::Drop);
+    pub fn pop(&mut self) {
+        current_def!(self).push(PIns::Pop);
     }
 
     pub fn exit(&mut self) {
@@ -217,7 +217,7 @@ impl ProgramBuilder {
                     assembled.push(as_byte(Instruction::Add));
                     assembled.push(num_args);
                 }
-                Drop => assembled.push(as_byte(Instruction::Drop)),
+                Pop => assembled.push(as_byte(Instruction::Pop)),
                 Call(jmp_addr) => {
                     assembled.push(as_byte(Instruction::Call));
                     assembled.write_u16::<Endianness>(jmp_addr).unwrap();
@@ -240,7 +240,7 @@ enum Instruction {
     Load,
     Store,
     Add,
-    Drop,
+    Pop,
     Call,
     Ret,
     Exit,
@@ -259,7 +259,7 @@ impl Debug for Program {
                 Store => "stor",
                 Call => "call",
                 Add => "add",
-                Drop => "drop",
+                Pop => "pop",
                 Exit => "exit",
                 Ret => "ret",
             };
@@ -309,7 +309,7 @@ impl Debug for Program {
                                         Add => format_inst(idx, inst, it.next().unwrap().1),
                                         Ret => format_inst(idx, inst, &""),
                                         Exit => format_inst(idx, inst, &""),
-                                        Drop => format_inst(idx, inst, &""),
+                                        Pop => format_inst(idx, inst, &""),
                                     }
                                 }
                             }

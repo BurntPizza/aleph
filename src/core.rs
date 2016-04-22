@@ -4,13 +4,9 @@
 
 // TODO: ALL of this (expect maybe the reader macros)
 
-use std::error::Error;
 
 use reader::{Form, ReaderEnv, ReadError};
 use reader::CharSyntaxType::*;
-use interpreter;
-use analyzer::AstNode;
-use symbol_table::SymbolTable;
 
 pub type Args<'a> = &'a [Form];
 pub type Function = fn(Args) -> Result<Form, String>;

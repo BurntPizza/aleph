@@ -1,6 +1,4 @@
 
-use itertools::*;
-
 use std::error::Error;
 
 use reader::{self, Form, InputStream};
@@ -66,7 +64,7 @@ fn compile(input: Analysis) -> Result<Program, Box<Error>> {
         for arg in others {
             // if something was left on the stack, clean it up
             if try!(emit(arg, env, p)) {
-                p.drop();
+                p.pop();
             }
         }
         emit(last, env, p)

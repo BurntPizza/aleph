@@ -6,8 +6,6 @@ use std::error::Error;
 use std::fmt::{self, Debug, Formatter};
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
-use analyzer::AstNode;
-
 pub struct SymbolTable {
     ident_map: HamtMap<String, u32>,
     id_map: HamtMap<u32, Record>,
