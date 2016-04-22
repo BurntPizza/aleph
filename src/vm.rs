@@ -163,6 +163,11 @@ impl ProgramBuilder {
         tmp
     }
 
+    pub fn load_named_constant(&mut self, constant_ast_id: u32) {
+        let val = self.constants[&constant_ast_id];
+        self.load_i64(val);
+    }
+
     pub fn load_var(&mut self, var_slot_idx: u16) {
         assert!(self.num_vars >= var_slot_idx + 1);
         current_def!(self).push(PIns::Load(var_slot_idx));
@@ -173,7 +178,7 @@ impl ProgramBuilder {
         current_def!(self).push(PIns::Store(var_slot_idx));
     }
 
-    pub fn load_const(&mut self, val: RegisterT) {
+    pub fn load_i64(&mut self, val: RegisterT) {
         current_def!(self).push(PIns::I64(val));
     }
 
@@ -325,9 +330,9 @@ mod test {
 
         let mut p = new_program();
 
-        p.load_const(1);
-        p.load_const(2);
-        p.load_const(3);
+        p.load_i64(1);
+        p.load_i64(2);
+        p.load_i64(3);
         p.add(3);
         p.exit();
 
@@ -344,9 +349,9 @@ mod test {
         let mut p = new_program();
 
         let x = p.fresh_var_idx();
-        p.load_const(7);
+        p.load_i64(7);
         p.store_var(x);
-        p.load_const(3);
+        p.load_i64(3);
         p.load_var(x);
         p.add(2);
         p.exit();
@@ -366,11 +371,11 @@ mod test {
 
         let mut p = new_program();
 
-        p.load_const(4);
+        p.load_i64(4);
         p.call(16);
         p.call(28);
         p.exit();
-        p.load_const(2); // addr 16
+        p.load_i64(2); // addr 16
         p.add(2);
         p.ret();
         p.call(16); // addr 28

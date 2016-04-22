@@ -84,16 +84,18 @@ impl Record {
 
 pub enum VarKind {
     // builtins
-    Special,
+    FnSpecial,
     // user-defined
-    Normal,
+    FnNormal,
+    Constant,
 }
 
 impl Debug for VarKind {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let string = match *self {
-            VarKind::Normal => "Normal",
-            VarKind::Special => "Special",
+            VarKind::FnNormal => "Normal",
+            VarKind::FnSpecial => "Special",
+            VarKind::Constant => "Constant",
         };
 
         write!(f, "{}", string)
@@ -142,8 +144,9 @@ impl Debug for SymbolTable {
 
         for r in records {
             let r_kind = match r.kind {
-                VarKind::Normal => "normal",
-                VarKind::Special => "special",
+                VarKind::FnNormal => "normal",
+                VarKind::FnSpecial => "special",
+                VarKind::Constant => "constant",
             };
 
             let out = format!("| {:>3$} | {:>4$} | {:>5$} |",

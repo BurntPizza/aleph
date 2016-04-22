@@ -8,9 +8,9 @@ use symbol_table::*;
 pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
     let mut env = SymbolTable::empty();
 
-    env.add_ident("def", VarKind::Special).unwrap();
-    env.add_ident("do", VarKind::Special).unwrap();
-    env.add_ident("+", VarKind::Special).unwrap();
+    env.add_ident("def", VarKind::FnSpecial).unwrap();
+    env.add_ident("do", VarKind::FnSpecial).unwrap();
+    env.add_ident("+", VarKind::FnSpecial).unwrap();
 
     // ////
 
@@ -46,9 +46,14 @@ fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, Analyze
             match text.parse::<i64>() {
                 Ok(val) => Ok(AstNode::int_const(val)),
                 Err(_) => {
-                    let id = try!(env.lookup_ident(text)
-                                     .map(Record::id)
-                                     .ok_or(AnalyzerError::UndefinedIdent(text.to_owned())));
+                    // TODO unwrap, normal?
+                    let id = env.lookup_ident(text)
+                                .map(Record::id)
+                                .unwrap_or_else(|| {
+                                    env.add_ident(text, VarKind::Constant)
+                                       .unwrap()
+                                       .id()
+                                });
                     Ok(AstNode::var(id))
                 }
             }
