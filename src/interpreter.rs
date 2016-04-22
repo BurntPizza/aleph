@@ -36,203 +36,25 @@ fn analyze(input: Vec<Form>) -> Result<Analysis, Box<Error>> {
 }
 
 fn compile(input: Analysis) -> Result<Program, Box<Error>> {
-    fn emit_const(p: &mut ProgramBuilder, val: i64) -> Result<bool, Box<Error>> {
-        p.load_i64(val);
-        Ok(true)
-    }
+    // use scopes!
+    // no special 'top-level' anonymous scope
+    // walk tree and visit nodes:
+    // - fn nodes: emit function in text section, 'value' of the node is... the addr? a special NormalFn kind?
+    //
+    //
 
-    fn emit_var(p: &mut ProgramBuilder,
-                var_id: u32,
-                env: &SymbolTable)
-                -> Result<bool, Box<Error>> {
-        let var_record = env.lookup_id(var_id).unwrap();
+    // some things are not known until post-assembly/linking, primarily fn addresses
 
-        match *var_record.kind() {
-            VarKind::Var => {
-                p.load_var(var_id);
-                Ok(true)
-            }
-            _ => unimplemented!(),
-        }
-    }
+    unimplemented!()
+    // let mut program = new_program();
+    // assert!(try!(emit(input.ast(), input.env(), &mut program)),
+    //         "nothing will be on the stack");
+    // program.exit();
 
-    fn emit_do(p: &mut ProgramBuilder,
-               env: &SymbolTable,
-               args: &[AstNode])
-               -> Result<bool, Box<Error>> {
-        let (last, others) = args.split_last().expect("emit_do");
+    // let program = program.finish(input.env());
 
-        for arg in others {
-            // if something was left on the stack, clean it up
-            if try!(emit(arg, env, p)) {
-                p.pop();
-            }
-        }
-
-        emit(last, env, p)
-    }
-
-    fn emit_def(p: &mut ProgramBuilder,
-                env: &SymbolTable,
-                args: &[AstNode])
-                -> Result<bool, Box<Error>> {
-        assert_eq!(args.len(), 2);
-
-        let var = &args[0];
-        let val = &args[1];
-
-        match *var {
-            AstNode::Var(var_id) => {
-                match *val {
-                    AstNode::Const(val) => {
-                        p.in_prologue();
-                        p.load_i64(val);
-                        p.def_var(var_id);
-                        p.store_var(var_id);
-                        p.out_prologue();
-                    }
-                    AstNode::Var(val_id) => {
-                        p.in_prologue();
-                        p.load_var(val_id);
-                        p.def_var(var_id);
-                        p.store_var(var_id);
-                        p.out_prologue();
-                    }
-                    AstNode::Inv(ref callee, ref args) => {
-                        emit_inv(p, callee, args, env).unwrap();
-                        p.in_prologue();
-                        p.def_var(var_id);
-                        p.store_var(var_id);
-                        p.out_prologue();
-                    }
-                }
-            }
-            _ => return Err("1st arg of `def` must be a var".into()),
-        }
-
-        Ok(false) // def never puts anything on the stack (TODO: nil?)
-    }
-
-    fn emit_fn(p: &mut ProgramBuilder,
-               env: &SymbolTable,
-               args: &[AstNode])
-               -> Result<bool, Box<Error>> {
-
-        fn next_fn_id() -> u32 {
-            static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
-
-            COUNTER.fetch_add(1, Ordering::SeqCst) as u32
-        }
-
-        assert!(args.len() > 1);
-        let (arg_list, body) = args.split_first().unwrap();
-
-        match *arg_list {
-            AstNode::Inv(..) => {}
-            _ => return Err("Malformed argument list".into()),
-        }
-
-        // return ref to function? (addr?)
-        let id = next_fn_id();
-        p.begin_fn_def(id);
-
-        // emit param marshalling header
-        if let AstNode::Inv(ref callee, ref args) = *arg_list {
-            for arg in ::std::iter::once(&**callee).chain(args.iter()) {
-                match *arg {
-                    AstNode::Var(arg_id) => {
-                        p.def_var(arg_id);
-                        p.store_var(arg_id);
-                    }
-                    _ => return Err("Argument lists may only contain vars".into()),
-                }
-            }
-        }
-
-
-        // emit body, wrapped in `do` form
-        try!(emit_do(p, env, body));
-        p.ret();
-
-        p.end_fn_def();
-        Ok(true)
-    }
-
-    fn emit_inv(p: &mut ProgramBuilder,
-                callee: &AstNode,
-                args: &[AstNode],
-                env: &SymbolTable)
-                -> Result<bool, Box<Error>> {
-
-
-        match *callee {
-            AstNode::Var(id) => {
-                let var_record = env.lookup_id(id).unwrap();
-                match *var_record.kind() {
-                    VarKind::Var => {
-                        for arg in args {
-                            try!(emit(arg, env, p));
-                        }
-
-                        p.load_var(id);
-                        p.call();
-                        Ok(true) // TODO: not all fns return a value
-                    }
-                    VarKind::NormalFn => {
-                        unimplemented!();
-                        // for arg in args {
-                        //     try!(emit(arg, env, p));
-                        // }
-                        // emit(callee, env, p)
-                    }
-                    VarKind::SpecialFn => {
-                        match var_record.ident() {
-                            "def" => emit_def(p, env, args),
-                            "fn" => emit_fn(p, env, args),
-                            "do" => emit_do(p, env, args),
-                            "+" => {
-                                assert!(args.len() < 256);
-
-                                for arg in args {
-                                    try!(emit(arg, env, p));
-                                }
-
-                                p.add(args.len() as u8);
-                                Ok(true)
-                            }
-                            _ => unimplemented!(),
-                        }
-                    }
-                    VarKind::Constant => Err("cannot invoke constant".into()),
-                }
-            }
-            _ => {
-                for arg in args {
-                    try!(emit(arg, env, p));
-                }
-                emit(callee, env, p)
-            }
-        }
-    }
-
-    // TODO: lift defs to top-level
-    fn emit(node: &AstNode, env: &SymbolTable, p: &mut ProgramBuilder) -> Result<bool, Box<Error>> {
-        match *node {
-            AstNode::Const(val) => emit_const(p, val),
-            AstNode::Var(id) => emit_var(p, id, env),
-            AstNode::Inv(ref callee, ref args) => emit_inv(p, callee, args, env),
-        }
-    }
-
-    let mut program = new_program();
-    assert!(try!(emit(input.ast(), input.env(), &mut program)),
-            "nothing will be on the stack");
-    program.exit();
-
-    let program = program.finish(input.env());
-
-    println!("Program: {:?}", program);
-    Ok(program)
+    // println!("Program: {:?}", program);
+    // Ok(program)
 }
 
 fn exec(input: Program) -> String {
