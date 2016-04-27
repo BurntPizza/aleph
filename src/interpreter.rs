@@ -3,7 +3,6 @@
 use itertools::*;
 
 use std::error::Error;
-use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
 
 use reader::{self, Form, InputStream};
 use analyzer::{self, AstNode};
@@ -97,6 +96,11 @@ fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
             BindingKind::Special => {
                 match record.ident() {
                     "do" => emit_do_invocation(args, env, p),
+                    "fn" => {
+                        let fn_var_id = try!(emit_fn_def(args, env, p));
+                        p.fn_ptr(fn_var_id);
+                        Ok(())
+                    }
                     "+" => {
                         // move this somewhere else?
                         for node in args {
@@ -109,8 +113,19 @@ fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
                     i => panic!("no special impl: {:?}", i),
                 }
             }
-            BindingKind::Fn => {
-                p.eval_fn(var_id);
+            BindingKind::Var => {
+                // TODO: this shouldn't be necessary once typechecking is impl
+                // because vars being invoked will properly have been made into
+                // BindingKind::Fn (right?)
+
+                // actually it might still be necessary
+
+                for node in args {
+                    try!(emit(node, env, p));
+                }
+
+                p.eval_binding(var_id); // load fn_ptr from local
+                p.call_ptr();           // call it
                 Ok(())
             }
             ref k => panic!("invoke var kind: not impl: {:?}", k),
@@ -133,13 +148,17 @@ fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
         }
     }
 
-    fn emit_fn_def(fn_var_id: u32,
+    // (fn def_args)
+    fn emit_fn_def(// fn_var_id: u32,
                    def_args: &[AstNode],
                    env: &mut SymbolTable,
                    p: &mut ProgramBuilder)
-                   -> Result<(), Box<Error>> {
+                   -> Result<u32, Box<Error>> {
         // one for param list, at least one for body
         assert!(def_args.len() >= 2);
+
+        let anon_record = env.fresh_numbered_ident("fn", BindingKind::Fn);
+        let fn_var_id = anon_record.id();
 
         let (param_list, body_forms) = def_args.split_first().unwrap();
 
@@ -180,7 +199,7 @@ fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
                 p.ret();
 
                 p.end_fn_def();
-                Ok(())
+                Ok(fn_var_id)
             }
             _ => Err("1st arg of `fn` must be param list".into()),
         }
@@ -201,16 +220,12 @@ fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
                     BindingKind::Special => {
                         match record.ident() {
                             "fn" => {
-                                // emit_fn_expr_invocation: (fn callee_args)
                                 for node in outer_args {
                                     try!(emit(node, env, p));
                                 }
 
-                                let anon_record = env.fresh_numbered_ident("fn", BindingKind::Fn);
-                                let fn_var_id = anon_record.id();
-
-                                try!(emit_fn_def(fn_var_id, callee_args, env, p));
-                                try!(emit_var_invocation(fn_var_id, outer_args, env, p));
+                                try!(emit_var_invocation(var_id, callee_args, env, p));
+                                p.call_ptr();
                                 Ok(())
                             }
                             i => panic!("not impl: {:?}", i),
@@ -285,44 +300,25 @@ mod test {
         assert_eq!(interpret("((fn (x y z) (+ x y z)) 1 2 3)"), "6");
     }
 
+    #[test]
+    fn fn_expr() {
+        assert_eq!(interpret("(fn (x y z)\
+                                (+ x y z))"),
+                   "<fn fn$0>");
+    }
+
+    #[test]
+    fn higher_order_fns() {
+        assert_eq!(interpret("((fn (x)   \
+                                 (x 1))  \
+                               (fn (a)   \
+                                 (+ a 2)))"),
+                   "3");
+    }
+
     // #[test]
     // fn let_expr() {
     //     assert_eq!(interpret("(let (x 1 y -1) (+ x y 5))"), "6");
     // }
 
-    // #[test]
-    // fn def_const_var() {
-    //     assert_eq!(interpret("(def x 7) x"), "7");
-    // }
-
-    // #[test]
-    // fn add_const_vars() {
-    //     assert_eq!(interpret("(def x 3) (def y 4) (+ x x y) (+ x 7 y)"), "14");
-    // }
-
-    // #[test]
-    // fn copy_var() {
-    //     assert_eq!(interpret("(def x 3) (def y x) y"), "3");
-    // }
-
-    // #[test]
-    // fn re_def_vars() {
-    //     assert_eq!(interpret("(def y 3) (def y 5) y"), "5");
-    // }
-    // #[ignore]
-    // #[test]
-    // fn def_fn() {
-    //     assert_eq!(interpret("(def f (fn (x) (+ 1 x x))) (f 7)"), "15");
-    // }
-
-    // #[ignore]
-    // #[test]
-    // fn nested_def_fn() {
-    //     assert_eq!(interpret("(def quadruple (fn (x) \
-    //                                            (def double (fn (y) \
-    //                                                          (+ y y))) \
-    //                                            (+ (double x) (double x)))) \
-    //                           (quadruple 7)"),
-    //                "28");
-    // }
 }
