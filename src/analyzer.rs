@@ -5,13 +5,13 @@ use std::fmt::{self, Display, Formatter};
 use reader::Form;
 use symbol_table::*;
 
-pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
+pub fn analyze_from_root(forms: Vec<Form>) -> Result<(AstNode, SymbolTable), AnalyzerError> {
     let mut env = SymbolTable::empty();
 
-    env.add_ident("def", VarKind::SpecialFn).unwrap();
-    env.add_ident("fn", VarKind::SpecialFn).unwrap();
-    env.add_ident("do", VarKind::SpecialFn).unwrap();
-    env.add_ident("+", VarKind::SpecialFn).unwrap();
+    env.add_ident("def", BindingKind::Special).unwrap();
+    env.add_ident("fn", BindingKind::Special).unwrap();
+    env.add_ident("do", BindingKind::Special).unwrap();
+    env.add_ident("+", BindingKind::Special).unwrap();
 
     // ////
 
@@ -24,19 +24,12 @@ pub fn analyze_from_root(forms: Vec<Form>) -> Result<Analysis, AnalyzerError> {
     // ///
 
     let do_id = env.lookup_ident("do")
-                   .map(Record::id)
+                   .map(|r| r.id())
                    .expect("No `do` found in env");
 
     let ast = AstNode::inv(AstNode::var(do_id), top_level_nodes);
 
-    let analysis = Analysis {
-        ast: ast,
-        symbol_table: env,
-    };
-
-    println!("analysis: {:#?}", analysis);
-
-    Ok(analysis)
+    Ok((ast, env))
 }
 
 #[allow(option_map_unwrap_or_else)] // map_or_else has lifetime problems in this case
@@ -50,9 +43,9 @@ fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, Analyze
                 Err(_) => {
                     // TODO unwrap, normal?
                     let id = env.lookup_ident(text)
-                                .map(Record::id)
+                                .map(|r| r.id())
                                 .unwrap_or_else(|| {
-                                    env.add_ident(text, VarKind::Var)
+                                    env.add_ident(text, BindingKind::Var)
                                        .unwrap()
                                        .id()
                                 });
@@ -78,22 +71,6 @@ fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, Analyze
                 }
             }
         }
-    }
-}
-
-#[derive(Debug)]
-pub struct Analysis {
-    ast: AstNode,
-    symbol_table: SymbolTable,
-}
-
-impl Analysis {
-    pub fn ast(&self) -> &AstNode {
-        &self.ast
-    }
-
-    pub fn env(&self) -> &SymbolTable {
-        &self.symbol_table
     }
 }
 

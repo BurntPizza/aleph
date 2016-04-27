@@ -19,10 +19,22 @@ impl SymbolTable {
         }
     }
 
+    pub fn fresh_numbered_ident<T: Into<String>>(&mut self, ident: T, kind: BindingKind) -> Record {
+        let ident = ident.into();
+        let mut n = 0;
+
+        loop {
+            match self.add_ident(format!("{}${}", ident, n), kind) {
+                Ok(r) => return r,
+                Err(_) => n += 1,
+            }
+        }
+    }
+
     pub fn add_ident<T: Into<String>>(&mut self,
                                       ident: T,
-                                      kind: VarKind)
-                                      -> Result<&Record, Box<Error>> {
+                                      kind: BindingKind)
+                                      -> Result<Record, Box<Error>> {
         let ident = ident.into();
 
         if let Some(record) = self.lookup_ident(&*ident) {
@@ -44,25 +56,25 @@ impl SymbolTable {
         self.ident_map = self.ident_map.clone().plus(ident, id);
         self.id_map = self.id_map.clone().plus(id, record);
 
-        Ok(self.lookup_id(id).unwrap())
+        Ok(self.lookup_id(id).unwrap().clone())
     }
 
-    pub fn lookup_ident<T: Into<String>>(&self, ident: T) -> Option<&Record> {
+    pub fn lookup_ident<T: Into<String>>(&self, ident: T) -> Option<Record> {
         self.ident_map.find(&ident.into()).and_then(|&id| self.lookup_id(id))
     }
 
-    pub fn lookup_id(&self, id: u32) -> Option<&Record> {
-        self.id_map.find(&id)
+    pub fn lookup_id(&self, id: u32) -> Option<Record> {
+        self.id_map.find(&id).map(|r| r.clone())
     }
 
     // TODO tree api
     // probably leave it until it's needed (and thus requirements are known)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Record {
     ident: String,
-    kind: VarKind,
+    kind: BindingKind,
     id: u32,
 }
 
@@ -75,31 +87,33 @@ impl Record {
         &*self.ident
     }
 
-    pub fn kind(&self) -> &VarKind {
-        &self.kind
+    pub fn kind(&self) -> BindingKind {
+        self.kind
     }
 }
 
 // TODO function ref?
 custom_derive! {
-    #[derive(IterVariantNames(VarKindVariantNames))]
-    pub enum VarKind {
+    #[derive(Copy, Clone, IterVariantNames(BindingKindVariantNames))]
+    pub enum BindingKind {
         // builtins
-        SpecialFn,
-        // user-defined
-        NormalFn,
+        Special,
+        // user defined:
+        Fn,
+        Macro,
         Var,
         Constant,
     }
 }
 
-impl Debug for VarKind {
+impl Debug for BindingKind {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let string = match *self {
-            VarKind::NormalFn => "NormalFn",
-            VarKind::SpecialFn => "SpecialFn",
-            VarKind::Constant => "Constant",
-            VarKind::Var => "Var",
+            BindingKind::Special => "Special",
+            BindingKind::Fn => "Fn",
+            BindingKind::Macro => "Macro",
+            BindingKind::Constant => "Constant",
+            BindingKind::Var => "Var",
         };
 
         write!(f, "{}", string)
@@ -126,7 +140,10 @@ impl Debug for SymbolTable {
         let ident_size = cmp::max("ident".len(),
                                   records.iter().map(|r| r.ident().len()).max().unwrap_or(0));
 
-        let var_kind_size: usize = VarKind::iter_variant_names().map(|s| s.len()).max().unwrap();
+        let var_kind_size: usize = BindingKind::iter_variant_names()
+                                       .map(|s| s.len())
+                                       .max()
+                                       .unwrap();
 
         let header = format!("| {:^3$} | {:^4$} | {:^5$} |",
                              "id",
@@ -148,10 +165,11 @@ impl Debug for SymbolTable {
 
         for r in records {
             let r_kind = match r.kind {
-                VarKind::NormalFn => "normal",
-                VarKind::SpecialFn => "special",
-                VarKind::Constant => "constant",
-                VarKind::Var => "var",
+                BindingKind::Special => "special",
+                BindingKind::Fn => "fn",
+                BindingKind::Macro => "macro",
+                BindingKind::Constant => "constant",
+                BindingKind::Var => "var",
             };
 
             let out = format!("| {:>3$} | {:>4$} | {:>5$} |",

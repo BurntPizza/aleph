@@ -1,14 +1,28 @@
 
+
 use itertools::*;
 use byteorder::*;
 
 use std::collections::HashMap;
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{self, Display, Debug, Formatter};
 
 use symbol_table::*;
 
 type Endianness = LittleEndian;
 type Table<K, V> = HashMap<K, V>;
+
+macro_rules! def_id {
+    ($name:ident) => {
+        #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+        struct $name(usize);
+
+        impl ::std::convert::From<usize> for $name {
+            fn from(val: usize) -> Self {
+                $name(val)
+            }
+        }
+    }
+}
 
 macro_rules! read_u32 {
     ($instr:ident, $ip:ident) => {{
@@ -62,6 +76,7 @@ macro_rules! pop {
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Ins {
+    Nop,
     LoadConst,
     Load,
     Save,
@@ -71,40 +86,30 @@ enum Ins {
     Call,
     Ret,
     Exit,
+
+    MarkStack,
+    PopToMark,
 }
 
-#[derive(Copy, Clone, Default)]
+#[derive(Copy, Clone, Default, Debug)]
 struct Slot {
     val: u64,
 }
 
 impl Slot {
+    fn from_i64(val: i64) -> Self {
+        Slot { val: val as u64 }
+    }
+
     fn as_i64(&self) -> i64 {
         self.val as i64
     }
 }
 
-struct FnPrototype {
-    
-}
-
-type FnAddr = u32;
-
-struct FnTable {}
-
-impl FnTable {
-    fn new_stack_frame(&self, ret_addr: usize, fn_addr: FnAddr) -> StackFrame {
-        //
-        unimplemented!()
-    }
-
-    // get info via prototype_idx
-}
 
 struct StackFrame {
     locals: Vec<Slot>,
-    return_addr: u32,
-    prototype_idx: u32
+    return_addr: u32, // prototype_idx: u32,
 }
 
 impl StackFrame {
@@ -136,6 +141,8 @@ pub fn exec_program(program: Program) -> i64 {
     let mut data_stack = Vec::with_capacity(128);
     let mut ip = 0;
 
+    let mut stack_marker = data_stack.len();
+
     loop {
         let i = ip;
         ip += 1;
@@ -143,9 +150,10 @@ pub fn exec_program(program: Program) -> i64 {
         let inst = program[i].into();
 
         match inst {
+            Nop => {}
             LoadConst => {
                 let const_idx = read_u16!(program, ip);
-                let val = const_table[&const_idx];
+                let val = const_table[const_idx as usize];
                 data_stack.push(val);
             }
             Load => {
@@ -158,7 +166,9 @@ pub fn exec_program(program: Program) -> i64 {
                 let val = pop!(data_stack);
                 peek_mut!(call_stack).save_local(idx, val);
             }
-            Pop => { pop!(data_stack); }
+            Pop => {
+                pop!(data_stack);
+            }
             Dup => {
                 let val = pop!(data_stack);
                 data_stack.push(val);
@@ -168,9 +178,11 @@ pub fn exec_program(program: Program) -> i64 {
                 let num_args = read_u8!(program, ip) as usize;
                 assert!(data_stack.len() >= num_args, "stack underflow: add");
                 let idx = data_stack.len() - num_args;
-                //let val = data_stack.drain(idx..).fold(0, |acc, e| acc + e);
-                //data_stack.push(val);
-                unimplemented!();
+                let val = data_stack.drain(idx..)
+                                    .map(|slot| slot.as_i64())
+                                    .fold(0, |acc, e| acc + e);
+                data_stack.push(Slot::from_i64(val));
+
             }
             Call => {
                 let addr = read_u32!(program, ip);
@@ -182,63 +194,423 @@ pub fn exec_program(program: Program) -> i64 {
                 let old_frame = pop!(call_stack);
                 ip = old_frame.return_addr as usize;
             }
-            Exit => return pop!(data_stack).as_i64(),
+            Exit => {
+                println!("Stack dump at exit:\n{:#?}", data_stack);
+                return pop!(data_stack).as_i64();
+            }
+
+            MarkStack => {
+                stack_marker = data_stack.len();
+            }
+            PopToMark => {
+                data_stack.truncate(stack_marker);
+            }
         }
     }
 }
 
 
+struct FnPrototype {
+    code: Vec<u8>, // assembled, or not?
+}
+
+type FnAddr = u32;
+
+#[derive(Debug)]
+struct FnTable {
+    num_locals_table: Table<FnAddr, usize>,
+    label_addr_table: Table<FnAddr, String>,
+    fn_def_id_addr_table: Table<FnAddr, u32>,
+}
+
+impl FnTable {
+    fn new_stack_frame(&self, ret_addr: usize, fn_addr: FnAddr) -> StackFrame {
+        let num_locals = self.num_locals_table[&fn_addr];
+
+        StackFrame {
+            locals: vec![Slot::from_i64(0); num_locals],
+            // prototype_idx: 0, // TODO proto
+            return_addr: ret_addr as u32,
+        }
+    }
+
+    fn get_label_at_addr(&self, fn_addr: FnAddr) -> Option<&str> {
+        self.label_addr_table.get(&fn_addr).map(|string| &**string)
+    }
+
+    fn fn_def_id_at_addr(&self, fn_addr: FnAddr) -> Option<u32> {
+        self.fn_def_id_addr_table.get(&fn_addr).map(|&id| id)
+    }
+
+    // get info via prototype_idx
+}
 
 pub struct Program {
     instructions: Vec<u8>,
     fn_table: FnTable,
-    const_table: Table<u16, Slot>,
+    const_table: Vec<Slot>,
+    env: SymbolTable,
+}
+
+def_id!(FnDefId);
+
+#[derive(Default)]
+struct FnDef {
+    // var_id -> evaluation
+    bindings: Table<u32, Vec<MIns>>,
+    code: Vec<MIns>,
+}
+
+pub struct ProgramBuilder {
+    current_fn_def: Vec<FnDefId>,
+    fn_defs: Table<FnDefId, FnDef>,
 }
 
 pub fn new_program() -> ProgramBuilder {
-    ProgramBuilder {
+    let main_id = FnDefId::from(0);
+    let mut fn_defs = Table::new();
+    let code = vec![MIns::FnDefBegin(main_id)];
 
+    fn_defs.insert(main_id,
+                   FnDef {
+                       bindings: Table::new(),
+                       code: code,
+                   });
+
+    ProgramBuilder {
+        current_fn_def: vec![main_id],
+        fn_defs: fn_defs,
+    }
+}
+
+impl ProgramBuilder {
+    fn current_fn_def(&mut self) -> &mut FnDef {
+        self.fn_defs
+            .get_mut(self.current_fn_def
+                         .last()
+                         .expect("stack underflow: current_fn_def"))
+            .expect("current_fn_def")
+    }
+
+    pub fn mark_stack(&mut self) {
+        self.current_fn_def().code.push(MIns::MarkStack);
+    }
+
+    pub fn pop_to_mark(&mut self) {
+        self.current_fn_def().code.push(MIns::PopToMark);
+    }
+
+    pub fn begin_fn_def(&mut self, fn_var_id: u32) {
+        let fn_def_id = FnDefId::from(fn_var_id as usize);
+        let mut fn_def = FnDef::default();
+
+        fn_def.code.push(MIns::FnDefBegin(fn_def_id));
+
+        self.fn_defs.insert(fn_def_id, fn_def);
+        self.current_fn_def.push(fn_def_id);
+    }
+
+    pub fn ret(&mut self) {
+        self.current_fn_def().code.push(MIns::Ret);
+    }
+
+    pub fn end_fn_def(&mut self) {
+        self.current_fn_def.pop();
+    }
+
+    pub fn make_locals(&mut self, param_ids: &[u32]) {
+        let mut cfd = self.current_fn_def();
+        let ref mut bindings = cfd.bindings;
+
+        // note: reversed (popping off of stack)
+        for (idx, &id) in param_ids.iter().enumerate().rev() {
+            cfd.code.push(MIns::SaveLocal(idx as u8));
+            bindings.insert(id, vec![MIns::LoadLocal(idx as u8)]);
+        }
+    }
+
+    // pub fn def_binding_to_const(&mut self, var_id: u32, val: i64) {
+    //     self.current_fn_def().bindings.insert(var_id, vec![MIns::I64(val)]);
+    // }
+
+    // pub fn def_binding_to_binding(&mut self, var_id: u32, var_id2: u32) {
+    //     let target = self.current_fn_def().bindings[&var_id2].clone();
+    //     self.current_fn_def().bindings.insert(var_id, target);
+    // }
+
+    // not sure about this
+    pub fn eval_binding(&mut self, var_id: u32) {
+        let fn_def = self.current_fn_def();
+        fn_def.code.append(&mut fn_def.bindings[&var_id].clone());
+    }
+
+    pub fn eval_fn(&mut self, fn_def_id: u32) {
+        self.current_fn_def().code.push(MIns::CallFn(FnDefId::from(fn_def_id as usize)));
+    }
+
+    pub fn i64_const(&mut self, val: i64) {
+        self.current_fn_def().code.push(MIns::I64(val));
+    }
+
+    pub fn add(&mut self, num_args: usize) {
+        self.current_fn_def().code.push(MIns::Add(num_args));
+    }
+
+    pub fn exit(&mut self) {
+        self.current_fn_def().code.push(MIns::Exit);
+    }
+
+    pub fn finish(self, env: SymbolTable) -> Program {
+        let mut instructions = vec![];
+        // let fn_table = FnTable { num_locals_table: Table::new() };
+        let mut const_table = vec![];
+
+        // fn_def_id -> fn_addr
+        let mut fn_begin_table = Table::new();
+
+        // callsite addr -> fn_def_id
+        let mut callsites_todo = Table::new();
+
+        let m_ins = self.fn_defs
+                        .iter()
+                        .sorted_by(|&(a_id, _), &(b_id, _)| a_id.0.cmp(&b_id.0))
+                        .into_iter()
+                        .flat_map(|(_, fn_def)| fn_def.code.iter());
+
+        for m_in in m_ins {
+            match *m_in {
+                MIns::FnDefBegin(fn_def_id) => {
+                    fn_begin_table.insert(fn_def_id, instructions.len());
+                }
+                MIns::MarkStack => {
+                    instructions.push(Ins::MarkStack.into());
+                }
+                MIns::PopToMark => {
+                    instructions.push(Ins::PopToMark.into());
+                }
+
+                MIns::I64(val) => {
+                    let idx = const_table.len() as u16;
+                    const_table.push(Slot::from_i64(val));
+
+                    instructions.push(Ins::LoadConst.into());
+                    instructions.write_u16::<Endianness>(idx).unwrap();
+                }
+                MIns::Add(num_args) => {
+                    instructions.push(Ins::Add.into());
+                    instructions.push(num_args as u8)
+                }
+
+                MIns::SaveLocal(idx) => {
+                    instructions.push(Ins::Save.into());
+                    instructions.push(idx);
+                }
+                MIns::LoadLocal(idx) => {
+                    instructions.push(Ins::Load.into());
+                    instructions.push(idx);
+                }
+
+                MIns::CallFn(fn_def_id) => {
+                    instructions.push(Ins::Call.into());
+
+                    let current_idx = instructions.len();
+                    callsites_todo.insert(current_idx, fn_def_id);
+
+                    // space for writing in addr
+                    instructions.write_u32::<Endianness>(0).unwrap();
+                }
+                MIns::Ret => {
+                    instructions.push(Ins::Ret.into());
+                }
+
+                MIns::Exit => {
+                    instructions.push(Ins::Exit.into());
+                }
+                // _ => panic!("MIns not impl: {:?}", m_in),
+            }
+        }
+
+        for (callsite_addr, fn_def_id) in callsites_todo.into_iter() {
+            let fn_addr = fn_begin_table[&fn_def_id] as FnAddr;
+
+            Endianness::write_u32(&mut instructions[callsite_addr..callsite_addr +
+                    ::std::mem::size_of::<FnAddr>()],
+                fn_addr);
+        }
+
+        let num_locals_table = self.fn_defs
+                                   .iter()
+                                   .map(|(fn_def_id, fn_def)| {
+                                       let fn_addr = fn_begin_table[fn_def_id] as FnAddr;
+                                       let num_locals = fn_def.bindings.len();
+                                       (fn_addr, num_locals)
+                                   })
+                                   .collect();
+
+        // TODO actual labels
+        let label_addr_table = fn_begin_table.iter()
+                                             .map(|(&k, &v)| {
+                                                 (v as FnAddr, format!("{}", k.0 as u32))
+                                             })
+                                             .collect();
+
+        let fn_def_id_addr_table = fn_begin_table.iter()
+                                                 .map(|(&k, &v)| (v as FnAddr, k.0 as u32))
+                                                 .collect();
+
+        let fn_table = FnTable {
+            num_locals_table: num_locals_table,
+            label_addr_table: label_addr_table,
+            fn_def_id_addr_table: fn_def_id_addr_table,
+        };
+
+        Program {
+            instructions: instructions,
+            fn_table: fn_table,
+            const_table: const_table,
+            env: env,
+        }
     }
 }
 
 
 // macro assembler instructions
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 enum MIns {
-    Add {
-        num_args: usize,
-    },
-    LoadLocal,
-    SaveLocal,
-    Call, // TODO: what info?
+    I64(i64),
+    // num_args
+    Add(usize),
+    LoadLocal(u8), // idx in local table
+    SaveLocal(u8), // idx in local table
+    CallFn(FnDefId),
     Ret,
     Exit,
+
+    FnDefBegin(FnDefId),
+    MarkStack,
+    PopToMark,
 }
 
-pub struct ProgramBuilder {
-    
-}
 
 impl ProgramBuilder {}
 
 impl Debug for Program {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use self::Ins::*;
+        // use self::Ins::*;
 
-        unimplemented!()
+        struct Line(usize, String, String); // line_num, instruction, args
+
+        enum LineType {
+            Label(String, Line),
+            Ins(Line),
+        }
+
+        fn fmt_label(self_: &Program, fn_def_id: u32) -> String {
+            format!("{}", self_.env.lookup_id(fn_def_id).unwrap().ident())
+        }
+
+        try!(writeln!(f, "Constant table:"));
+
+        self.const_table
+            .iter()
+            .enumerate()
+            .foreach(|(idx, val)| writeln!(f, "[{}] {:<}", idx, val.as_i64()).unwrap());
+
+        try!(writeln!(f, ""));
+
+        self.instructions
+            .iter()
+            .map(|&byte| Ins::from(byte))
+            .enumerate()
+            .batching(|mut it| {
+                match it.next() {
+                    None => None,
+                    Some((idx, ins)) => {
+                        let (inst_string, args_string) = {
+                            match ins {
+                                Ins::Nop => ("nop", "".into()),
+                                Ins::Add => {
+                                    let num_args: u8 = it.next().unwrap().1.into();
+                                    ("add", format!("{}", num_args))
+                                }
+
+                                Ins::Call => {
+                                    let bytes = [it.next().unwrap().1.into(),
+                                                 it.next().unwrap().1.into(),
+                                                 it.next().unwrap().1.into(),
+                                                 it.next().unwrap().1.into()];
+
+                                    let fn_addr = Endianness::read_u32(&bytes);
+                                    let fn_def_id = self.fn_table
+                                                        .fn_def_id_at_addr(fn_addr)
+                                                        .unwrap();
+                                    ("call", fmt_label(self, fn_def_id))
+                                }
+                                Ins::Ret => ("ret", "".into()),
+
+                                Ins::Load => {
+                                    let idx: u8 = it.next().unwrap().1.into();
+                                    ("load", format!("%{}", idx))
+                                }
+                                Ins::Save => {
+                                    let idx: u8 = it.next().unwrap().1.into();
+                                    ("save", format!("%{}", idx))
+                                }
+
+                                Ins::LoadConst => {
+                                    let bytes = [it.next().unwrap().1.into(),
+                                                 it.next().unwrap().1.into()];
+
+                                    let idx = Endianness::read_u16(&bytes);
+                                    let val = self.const_table[idx as usize].as_i64();
+
+                                    ("ldc", format!("{}", val))
+                                }
+
+                                Ins::Dup => ("dup", "".into()),
+                                Ins::Pop => ("pop", "".into()),
+
+                                Ins::Exit => ("exit", "".into()),
+
+                                Ins::MarkStack => ("mksk", "".into()),
+                                Ins::PopToMark => ("ptmk", "".into()),
+                            }
+                        };
+
+                        let line = Line(idx, inst_string.into(), args_string);
+
+                        match self.fn_table.fn_def_id_at_addr(idx as FnAddr) {
+                            Some(id) if id != 0 => Some(LineType::Label(fmt_label(self, id), line)),
+                            _ => Some(LineType::Ins(line)),
+                        }
+                    }
+                }
+            })
+            .foreach(|line| {
+                let line = match line {
+                    LineType::Label(label, Line(idx, ins_string, args_string)) => {
+                        format!("  {}:\n{}: \t{:<4} {}", label, idx, ins_string, args_string)
+                    }
+                    LineType::Ins(Line(idx, ins_string, args_string)) => {
+                        format!("{}: \t{:<4} {}", idx, ins_string, args_string)
+                    }
+                };
+
+                writeln!(f, "{}", line).unwrap();
+            });
+        Ok(())
     }
 }
 
 impl ::std::convert::From<u8> for Ins {
     fn from(byte: u8) -> Self {
-        unsafe { ::std::mem::transmute(byte) }    
+        unsafe { ::std::mem::transmute(byte) }
     }
-    
 }
 
 impl ::std::convert::From<Ins> for u8 {
     fn from(ins: Ins) -> Self {
-        unsafe { ::std::mem::transmute(ins) }    
+        unsafe { ::std::mem::transmute(ins) }
     }
 }
 
