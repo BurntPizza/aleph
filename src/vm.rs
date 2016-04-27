@@ -300,6 +300,11 @@ struct FnDef {
     code: Vec<MIns>,
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum AssemblerOptions {
+    CoalesceIndirectCalls,
+}
+
 pub struct ProgramBuilder {
     current_fn_def: Vec<FnDefId>,
     fn_defs: Table<FnDefId, FnDef>,
@@ -399,8 +404,9 @@ impl ProgramBuilder {
     pub fn exit(&mut self) {
         self.current_fn_def().code.push(MIns::Exit);
     }
+    pub fn finish(self, env: SymbolTable, config: &[AssemblerOptions]) -> Program {
+        use std::iter::Iterator;
 
-    pub fn finish(self, env: SymbolTable) -> Program {
         let mut instructions = vec![];
         let mut const_table = vec![];
 
@@ -414,10 +420,23 @@ impl ProgramBuilder {
                         .iter()
                         .sorted_by(|&(a_id, _), &(b_id, _)| a_id.0.cmp(&b_id.0))
                         .into_iter()
-                        .flat_map(|(_, fn_def)| fn_def.code.iter());
+                        .flat_map(|(_, fn_def)| {
+                            if config.contains(&AssemblerOptions::CoalesceIndirectCalls) {
+                                Box::new(fn_def.code.iter().cloned().coalesce(|a, b| {
+                                    match (a, b) {
+                                        (MIns::FnPtr(fn_def_id), MIns::CallPtr) => {
+                                            Ok(MIns::CallFn(fn_def_id))
+                                        }
+                                        (a, b) => Err((a, b)),
+                                    }
+                                })) as Box<Iterator<Item = MIns>>
+                            } else {
+                                Box::new(fn_def.code.iter().cloned()) as Box<Iterator<Item = MIns>>
+                            }
+                        });
 
         for m_in in m_ins {
-            match *m_in {
+            match m_in {
                 MIns::FnDefBegin(fn_def_id) => {
                     fn_begin_table.insert(fn_def_id, instructions.len());
                 }

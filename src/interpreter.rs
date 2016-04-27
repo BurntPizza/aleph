@@ -270,7 +270,7 @@ fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
 
     println!("{:?}", env);
 
-    let program = program.finish(env);
+    let program = program.finish(env, &[AssemblerOptions::CoalesceIndirectCalls]);
 
     println!("{:?}", program);
     Ok(program)
