@@ -1,79 +1,15 @@
 
-
 use itertools::*;
 use byteorder::*;
 
+use std::io::Cursor;
 use std::collections::HashMap;
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{self, Display, Debug, Formatter};
 
 use symbol_table::*;
 
-type Endianness = LittleEndian;
+type Endianness = NativeEndian;
 type Table<K, V> = HashMap<K, V>;
-
-macro_rules! def_id {
-    ($name:ident, $ty:ty) => {
-        #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
-        struct $name($ty);
-
-        impl ::std::convert::From<$ty> for $name {
-            fn from(val: $ty) -> Self {
-                $name(val)
-            }
-        }
-    }
-}
-
-macro_rules! read_u32 {
-    ($instr:ident, $ip:ident) => {{
-        let val = Endianness::read_u32(&$instr[$ip..$ip + 4]);
-        $ip += 4;
-        val
-    }}
-}
-
-macro_rules! read_u16 {
-    ($instr:ident, $ip:ident) => {{
-        let val = Endianness::read_u16(&$instr[$ip..$ip + 2]);
-        $ip += 2;
-        val
-    }}
-}
-
-macro_rules! read_u8 {
-    ($instr:ident, $ip:ident) => {{
-        let val = $instr[$ip];
-        $ip += 1;
-        val
-    }}
-}
-
-macro_rules! read_i64 {
-    ($instr:ident, $ip:ident) => {{
-        let val = Endianness::read_i64(&$instr[$ip..$ip + 8]);
-        $ip += 8;
-        val
-    }}
-}
-
-macro_rules! peek {
-    ($stack:ident) => {
-        $stack.last().unwrap()
-    }
-}
-
-macro_rules! peek_mut {
-    ($stack:ident) => {
-        $stack.last_mut().unwrap()
-    }
-}
-
-macro_rules! pop {
-    ($stack:ident) => {
-        $stack.pop().unwrap()
-    }
-}
-
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Ins {
     Nop,
@@ -102,17 +38,40 @@ enum Ins {
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum SlotType {
+    UnInit,
     I64,
     FnPtr,
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct Slot {
+struct Slot {
     val: u64,
     ty: SlotType,
 }
 
+struct StackFrame {
+    locals: Vec<Slot>,
+    return_addr: u64,
+}
+
+impl StackFrame {
+    fn load_local(&self, idx: u8) -> Slot {
+        self.locals[idx as usize]
+    }
+
+    fn save_local(&mut self, idx: u8, val: Slot) {
+        self.locals[idx as usize] = val;
+    }
+}
+
 impl Slot {
+    fn uninitialized() -> Self {
+        Slot {
+            val: 0,
+            ty: SlotType::UnInit,
+        }
+    }
+
     fn from_i64(val: i64) -> Self {
         Slot {
             val: val as u64,
@@ -138,110 +97,93 @@ impl Slot {
     }
 }
 
-
-struct StackFrame {
-    locals: Vec<Slot>,
-    return_addr: u32,
-}
-
-impl StackFrame {
-    fn load_local(&self, idx: u8) -> Slot {
-        self.locals[idx as usize]
-    }
-
-    fn save_local(&mut self, idx: u8, val: Slot) {
-        self.locals[idx as usize] = val;
+impl Display for Slot {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self.ty {
+            SlotType::I64 => write!(f, "{}", self.as_i64()),
+            SlotType::FnPtr => {
+                let fn_var_id = self.as_fn_ptr().0;
+                // let ident = env.lookup_id(fn_var_id).unwrap().ident();
+                write!(f, "<fn {}>", fn_var_id)
+            }
+            SlotType::UnInit => panic!(),
+        }
     }
 }
 
+// TODO: return type
 pub fn exec_program(program: Program) -> String {
     use self::Ins::*;
 
-    let env = program.env;
     let const_table = program.const_table;
     let fn_table = program.fn_table;
-    let program = program.instructions;
+    let mut program = Cursor::new(program.instructions);
 
-    let mut call_stack = vec![fn_table.new_stack_frame(0, 0)]; // correct?
+    let mut call_stack = vec![fn_table.new_stack_frame(0, FnAddr::from(0))];
     let mut data_stack = Vec::with_capacity(128);
-    let mut ip = 0;
 
     let mut stack_marker = data_stack.len();
 
     loop {
-        let i = ip;
-        ip += 1;
-
-        let inst = program[i].into();
-
-        match inst {
+        match program.read_u8().unwrap().into() {
             Nop => {}
             LoadConst => {
-                let const_idx = read_u16!(program, ip);
+                let const_idx = program.read_u8().unwrap();
                 let val = const_table[const_idx as usize];
                 data_stack.push(val);
             }
             FnPtr => {
-                let fn_def_id = read_u32!(program, ip);
+                let fn_def_id = program.read_u32::<Endianness>().unwrap();
                 data_stack.push(Slot::from_fn_ptr(fn_def_id));
             }
             CallPtr => {
-                let slot = pop!(data_stack);
+                let slot = data_stack.pop().unwrap();
                 let fn_def_id = slot.as_fn_ptr();
                 let addr = fn_table.get_fn_addr(fn_def_id).unwrap();
-                let new_frame = fn_table.new_stack_frame(ip, addr);
+                let new_frame = fn_table.new_stack_frame(program.position(), addr);
                 call_stack.push(new_frame);
-                ip = addr as usize;
+                program.set_position(u32::from(addr) as u64);
             }
             Load => {
-                let idx = read_u8!(program, ip);
-                let val = peek!(call_stack).load_local(idx);
+                let idx = program.read_u8().unwrap();
+                let val = call_stack.last().unwrap().load_local(idx);
                 data_stack.push(val);
             }
             Save => {
-                let idx = read_u8!(program, ip);
-                let val = pop!(data_stack);
-                peek_mut!(call_stack).save_local(idx, val);
+                let idx = program.read_u8().unwrap();
+                let val = data_stack.pop().unwrap();
+                call_stack.last_mut().unwrap().save_local(idx, val);
             }
             Pop => {
-                pop!(data_stack);
+                data_stack.pop().unwrap();
             }
             Dup => {
-                let val = pop!(data_stack);
+                let val = data_stack.pop().unwrap();
                 data_stack.push(val);
                 data_stack.push(val);
             }
             Add => {
-                let num_args = read_u8!(program, ip) as usize;
+                let num_args = program.read_u8().unwrap() as usize;
                 assert!(data_stack.len() >= num_args, "stack underflow: add");
                 let idx = data_stack.len() - num_args;
                 let val = data_stack.drain(idx..)
                                     .map(|slot| slot.as_i64())
                                     .fold(0, |acc, e| acc + e);
                 data_stack.push(Slot::from_i64(val));
-
             }
             Call => {
-                let addr = read_u32!(program, ip);
-                let new_frame = fn_table.new_stack_frame(ip, addr);
+                let addr = FnAddr::from(program.read_u32::<Endianness>().unwrap());
+                let new_frame = fn_table.new_stack_frame(program.position(), addr);
                 call_stack.push(new_frame);
-                ip = addr as usize;
+                program.set_position(u32::from(addr) as u64);
             }
             Ret => {
-                let old_frame = pop!(call_stack);
-                ip = old_frame.return_addr as usize;
+                let old_frame = call_stack.pop().unwrap();
+                program.set_position(old_frame.return_addr);
             }
             Exit => {
                 return match data_stack.pop() {
-                    Some(slot) => {
-                        match slot.ty {
-                            SlotType::I64 => format!("{}", slot.as_i64()),
-                            SlotType::FnPtr => {
-                                let fn_var_id = slot.as_fn_ptr().0;
-                                format!("<fn {}>", env.lookup_id(fn_var_id).unwrap().ident())
-                            }
-                        }
-                    }
+                    Some(slot) => format!("{}", slot),
                     None => "".into(),
                 };
             }
@@ -256,31 +198,29 @@ pub fn exec_program(program: Program) -> String {
     }
 }
 
-type FnAddr = u32;
-
 #[derive(Debug)]
 struct FnTable {
     num_locals_table: Table<FnAddr, usize>,
-    fn_def_id_addr_table: Table<FnAddr, u32>,
-    fn_def_id_to_addr_table: Table<u32, FnAddr>,
+    fn_addr_to_fn_def_id_table: Table<FnAddr, FnDefId>,
+    fn_def_id_to_addr_table: Table<FnDefId, FnAddr>,
 }
 
 impl FnTable {
-    fn new_stack_frame(&self, ret_addr: usize, fn_addr: FnAddr) -> StackFrame {
+    fn new_stack_frame(&self, ret_addr: u64, fn_addr: FnAddr) -> StackFrame {
         let num_locals = self.num_locals_table[&fn_addr];
 
         StackFrame {
-            locals: vec![Slot::from_i64(0); num_locals],
-            return_addr: ret_addr as u32,
+            locals: vec![Slot::uninitialized(); num_locals],
+            return_addr: ret_addr,
         }
     }
 
-    fn fn_def_id_at_addr(&self, fn_addr: FnAddr) -> Option<u32> {
-        self.fn_def_id_addr_table.get(&fn_addr).map(|&id| id)
+    fn fn_def_id_at_addr(&self, fn_addr: FnAddr) -> Option<FnDefId> {
+        self.fn_addr_to_fn_def_id_table.get(&fn_addr).map(|&id| id)
     }
 
     fn get_fn_addr(&self, fn_def_id: FnDefId) -> Option<FnAddr> {
-        self.fn_def_id_to_addr_table.get(&fn_def_id.0).cloned()
+        self.fn_def_id_to_addr_table.get(&fn_def_id).cloned()
     }
 }
 
@@ -291,7 +231,6 @@ pub struct Program {
     env: SymbolTable,
 }
 
-def_id!(FnDefId, u32);
 
 #[derive(Default)]
 struct FnDef {
@@ -407,8 +346,27 @@ impl ProgramBuilder {
     pub fn finish(self, env: SymbolTable, config: &[AssemblerOptions]) -> Program {
         use std::iter::Iterator;
 
-        let mut instructions = vec![];
-        let mut const_table = vec![];
+
+        // concatenated m_instructions from all function defs
+        let whole_program_code =
+            self.fn_defs
+                .iter()
+                .sorted_by(|&(a_id, _), &(b_id, _)| a_id.0.cmp(&b_id.0))
+                .into_iter()
+                .flat_map(|(_, fn_def)| {
+                    if config.contains(&AssemblerOptions::CoalesceIndirectCalls) {
+                        Box::new(fn_def.code.iter().cloned().coalesce(|a, b| {
+                            match (a, b) {
+                                (MIns::FnPtr(fn_def_id), MIns::CallPtr) => {
+                                    Ok(MIns::CallFn(fn_def_id))
+                                }
+                                (a, b) => Err((a, b)),
+                            }
+                        })) as Box<Iterator<Item = MIns>>
+                    } else {
+                        Box::new(fn_def.code.iter().cloned()) as Box<Iterator<Item = MIns>>
+                    }
+                });
 
         // fn_def_id -> fn_addr
         let mut fn_begin_table = Table::new();
@@ -416,29 +374,14 @@ impl ProgramBuilder {
         // callsite addr -> fn_def_id
         let mut callsites_todo = Table::new();
 
-        let m_ins = self.fn_defs
-                        .iter()
-                        .sorted_by(|&(a_id, _), &(b_id, _)| a_id.0.cmp(&b_id.0))
-                        .into_iter()
-                        .flat_map(|(_, fn_def)| {
-                            if config.contains(&AssemblerOptions::CoalesceIndirectCalls) {
-                                Box::new(fn_def.code.iter().cloned().coalesce(|a, b| {
-                                    match (a, b) {
-                                        (MIns::FnPtr(fn_def_id), MIns::CallPtr) => {
-                                            Ok(MIns::CallFn(fn_def_id))
-                                        }
-                                        (a, b) => Err((a, b)),
-                                    }
-                                })) as Box<Iterator<Item = MIns>>
-                            } else {
-                                Box::new(fn_def.code.iter().cloned()) as Box<Iterator<Item = MIns>>
-                            }
-                        });
+        let mut instructions = vec![];
+        let mut const_table = vec![];
 
-        for m_in in m_ins {
-            match m_in {
+
+        for m_instruction in whole_program_code {
+            match m_instruction {
                 MIns::FnDefBegin(fn_def_id) => {
-                    fn_begin_table.insert(fn_def_id, instructions.len());
+                    fn_begin_table.insert(fn_def_id, FnAddr::from(instructions.len() as u32));
                 }
                 MIns::MarkStack => {
                     instructions.push(Ins::MarkStack.into());
@@ -496,35 +439,31 @@ impl ProgramBuilder {
             }
         }
 
+        // fill in callsites
         for (callsite_addr, fn_def_id) in callsites_todo.into_iter() {
-            let fn_addr = fn_begin_table[&fn_def_id] as FnAddr;
+            let fn_addr = fn_begin_table[&fn_def_id];
 
             Endianness::write_u32(&mut instructions[callsite_addr..callsite_addr +
                     ::std::mem::size_of::<FnAddr>()],
-                fn_addr);
+                fn_addr.into());
         }
 
         let num_locals_table = self.fn_defs
                                    .iter()
                                    .map(|(fn_def_id, fn_def)| {
-                                       let fn_addr = fn_begin_table[fn_def_id] as FnAddr;
+                                       let fn_addr = fn_begin_table[fn_def_id];
                                        let num_locals = fn_def.bindings.len();
                                        (fn_addr, num_locals)
                                    })
                                    .collect();
 
-        let fn_def_id_addr_table = fn_begin_table.iter()
-                                                 .map(|(&k, &v)| (v as FnAddr, k.0 as u32))
-                                                 .collect();
+        let fn_def_id_to_addr_table = fn_begin_table;
 
-        let fn_def_id_to_addr_table = fn_begin_table.iter()
-                                                    .map(|(&k, &v)| (k.0 as u32, v as FnAddr))
-                                                    .collect();
+        let fn_addr_to_fn_def_id_table = transposed(&fn_def_id_to_addr_table);
 
         let fn_table = FnTable {
             num_locals_table: num_locals_table,
-            // label_addr_table: label_addr_table,
-            fn_def_id_addr_table: fn_def_id_addr_table,
+            fn_addr_to_fn_def_id_table: fn_addr_to_fn_def_id_table,
             fn_def_id_to_addr_table: fn_def_id_to_addr_table,
         };
 
@@ -537,6 +476,12 @@ impl ProgramBuilder {
     }
 }
 
+fn transposed<K, V>(input: &Table<K, V>) -> Table<V, K>
+    where K: ::std::hash::Hash + ::std::cmp::Eq + Clone,
+          V: ::std::hash::Hash + ::std::cmp::Eq + Clone
+{
+    input.iter().map(|(k, v)| (v.clone(), k.clone())).collect()
+}
 
 // macro assembler instructions
 #[derive(Clone, Debug)]
@@ -558,18 +503,48 @@ enum MIns {
     PopToMark,
 }
 
+impl Ins {
+    fn mnemonic(&self) -> &str {
+        match *self {
+            Ins::Add => "add",
+            Ins::Call => "call",
+            Ins::CallPtr => "pcall",
+            Ins::Dup => "dup",
+            Ins::Exit => "exit",
+            Ins::FnPtr => "fptr",
+            Ins::Load => "load",
+            Ins::LoadConst => "ldc",
+            Ins::MarkStack => "mksk",
+            Ins::Nop => "nop",
+            Ins::Pop => "pop",
+            Ins::PopToMark => "ptmk",
+            Ins::Ret => "ret",
+            Ins::Save => "save",
+        }
+    }
+}
+
 impl Debug for Program {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use self::Ins::*;
 
         struct Line(usize, String, String); // line_num, instruction, args
+
+        impl Display for Line {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                match *self {
+                    Line(idx, ref ins, ref args) => write!(f, "{}: \t{:<6} {}", idx, ins, args),
+                }
+            }
+        }
 
         enum LineType {
             Label(String, Line),
             Ins(Line),
         }
 
-        fn fmt_label(self_: &Program, fn_def_id: u32) -> String {
-            format!("{}", self_.env.lookup_id(fn_def_id).unwrap().ident())
+        fn fmt_label(self_: &Program, fn_def_id: FnDefId) -> String {
+            format!("{}", self_.env.lookup_id(fn_def_id.into()).unwrap().ident())
         }
 
         try!(writeln!(f, "Constant table:"));
@@ -589,89 +564,81 @@ impl Debug for Program {
                 match it.next() {
                     None => None,
                     Some((idx, ins)) => {
-                        let (inst_string, args_string) = {
+                        let args_string = {
                             match ins {
-                                Ins::Nop => ("nop", "".into()),
-                                Ins::Add => {
+                                Nop |
+                                Ret |
+                                Dup |
+                                Pop |
+                                Exit |
+                                CallPtr |
+                                MarkStack |
+                                PopToMark => "".into(),
+                                Add => {
                                     let num_args: u8 = it.next().unwrap().1.into();
-                                    ("add", format!("{}", num_args))
+                                    format!("{}", num_args)
                                 }
-
-                                Ins::Call => {
+                                Call => {
                                     let bytes = [it.next().unwrap().1.into(),
                                                  it.next().unwrap().1.into(),
                                                  it.next().unwrap().1.into(),
                                                  it.next().unwrap().1.into()];
 
-                                    let fn_addr = Endianness::read_u32(&bytes);
+                                    let fn_addr = FnAddr::from(Endianness::read_u32(&bytes));
                                     let fn_def_id = self.fn_table
                                                         .fn_def_id_at_addr(fn_addr)
                                                         .unwrap();
-                                    ("call", fmt_label(self, fn_def_id))
+                                    fmt_label(self, fn_def_id)
                                 }
-                                Ins::Ret => ("ret", "".into()),
-
-                                Ins::Load => {
+                                Load => {
                                     let idx: u8 = it.next().unwrap().1.into();
-                                    ("load", format!("%{}", idx))
+                                    format!("%{}", idx)
                                 }
-                                Ins::Save => {
+                                Save => {
                                     let idx: u8 = it.next().unwrap().1.into();
-                                    ("save", format!("%{}", idx))
+                                    format!("%{}", idx)
                                 }
-
-                                Ins::LoadConst => {
+                                LoadConst => {
                                     let bytes = [it.next().unwrap().1.into(),
                                                  it.next().unwrap().1.into()];
 
                                     let idx = Endianness::read_u16(&bytes);
                                     let val = self.const_table[idx as usize].as_i64();
 
-                                    ("ldc", format!("{}", val))
+                                    format!("{}", val)
                                 }
-                                Ins::FnPtr => {
+                                FnPtr => {
                                     let bytes = [it.next().unwrap().1.into(),
                                                  it.next().unwrap().1.into(),
                                                  it.next().unwrap().1.into(),
                                                  it.next().unwrap().1.into()];
 
-                                    let fn_def_id = Endianness::read_u32(&bytes);
-                                    ("fptr", fmt_label(self, fn_def_id))
+                                    let fn_def_id = FnDefId::from(Endianness::read_u32(&bytes));
+                                    fmt_label(self, fn_def_id)
                                 }
-                                Ins::CallPtr => ("pcall", "".into()),
-
-                                Ins::Dup => ("dup", "".into()),
-                                Ins::Pop => ("pop", "".into()),
-
-                                Ins::Exit => ("exit", "".into()),
-
-                                Ins::MarkStack => ("mksk", "".into()),
-                                Ins::PopToMark => ("ptmk", "".into()),
                             }
                         };
 
-                        let line = Line(idx, inst_string.into(), args_string);
+                        let line = Line(idx, ins.mnemonic().into(), args_string);
+                        let main_id = FnDefId::from(0);
 
-                        match self.fn_table.fn_def_id_at_addr(idx as FnAddr) {
-                            Some(id) if id != 0 => Some(LineType::Label(fmt_label(self, id), line)),
+                        match self.fn_table.fn_def_id_at_addr(FnAddr::from(idx as u32)) {
+                            Some(id) if id != main_id => {
+                                Some(LineType::Label(fmt_label(self, id), line))
+                            }
                             _ => Some(LineType::Ins(line)),
                         }
                     }
                 }
             })
-            .foreach(|line| {
-                let line = match line {
-                    LineType::Label(label, Line(idx, ins_string, args_string)) => {
-                        format!("  {}:\n{}: \t{:<6} {}", label, idx, ins_string, args_string)
-                    }
-                    LineType::Ins(Line(idx, ins_string, args_string)) => {
-                        format!("{}: \t{:<6} {}", idx, ins_string, args_string)
-                    }
-                };
+            .map(|line| {
+                match line {
+                    LineType::Label(label, line) => writeln!(f, "  {}:\n{}", label, line),
+                    LineType::Ins(line) => writeln!(f, "{}", line),
+                }
 
-                writeln!(f, "{}", line).unwrap();
-            });
-        Ok(())
+            })
+            .fold_results((), |_, _| ())
     }
 }
 
@@ -686,3 +653,25 @@ impl ::std::convert::From<Ins> for u8 {
         unsafe { ::std::mem::transmute(ins) }
     }
 }
+
+macro_rules! def_id {
+    ($name:ident, $ty:ty) => {
+        #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+        struct $name($ty);
+
+        impl ::std::convert::From<$ty> for $name {
+            fn from(val: $ty) -> Self {
+                $name(val)
+            }
+        }
+
+        impl ::std::convert::From<$name> for $ty {
+            fn from(val: $name) -> Self {
+                val.0
+            }
+        }
+    }
+}
+
+def_id!(FnAddr, u32);
+def_id!(FnDefId, u32);

@@ -301,13 +301,6 @@ mod test {
     }
 
     #[test]
-    fn fn_expr() {
-        assert_eq!(interpret("(fn (x y z)\
-                                (+ x y z))"),
-                   "<fn fn$0>");
-    }
-
-    #[test]
     fn higher_order_fns() {
         assert_eq!(interpret("((fn (x)   \
                                  (x 1))  \
