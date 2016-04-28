@@ -1,12 +1,11 @@
 
 //! Infrastructure for parsing code
 
+use std::error::Error;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Debug, Formatter};
 
 use itertools::*;
-
-use core;
 
 use self::CharSyntaxType::*;
 use self::MacroCharType::*;
@@ -14,22 +13,46 @@ use self::ReaderState::*;
 use self::ReadErrorType::*;
 
 /// The type of functions implementing reader macros
-pub type MacroFunction = fn(&mut ReaderEnv, u8) -> Result<Option<Form>, ()>;
+type MacroFunction = fn(&mut InputStream, &ReadTable, &MacroTable, u8)
+                        -> Result<Option<Form>, ReadError>;
+
+pub fn read_forms(input: String) -> Result<Vec<Form>, Box<Error>> {
+    let mut stream = InputStream::new(input);
+    let readtable = ReadTable::default();
+    let macrotable = MacroTable::default();
+
+    let mut results = vec![];
+
+    loop {
+        match read_token(&mut stream, &readtable, &macrotable) {
+            Ok(form) => results.push(form),
+            Err(e) => {
+                let error_type = e.type_.clone();
+
+                if error_type == ReadErrorType::EOS ||
+                   (error_type == ReadErrorType::EmptyToken && stream.next().is_none()) {
+                    return Ok(results);
+                }
+                return Err(e.into());
+            }
+        }
+    }
+}
 
 // Note: guaranteed to be ASCII
 #[derive(Debug, Clone)]
-pub struct InputStream {
+struct InputStream {
     src: String,
     idx: usize,
 }
 
 impl InputStream {
-    pub fn new(src: String) -> Self {
+    fn new(src: String) -> Self {
         assert!(::std::ascii::AsciiExt::is_ascii(&*src));
         InputStream { src: src, idx: 0 }
     }
 
-    pub fn unread(&mut self) {
+    fn unread(&mut self) {
         assert!(self.idx > 0);
         self.idx -= 1;
     }
@@ -53,13 +76,17 @@ impl Iterator for InputStream {
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct Span {
     // instead refer to ReaderEnv? Interpreter?
-    pub text: String,
+    text: String,
 }
 
 impl Span {
     fn new(text: String) -> Self {
         // TODO: default
         Span { text: text }
+    }
+
+    pub fn text(&self) -> &str {
+        &*self.text
     }
 }
 
@@ -74,21 +101,21 @@ pub enum Form {
 
 impl Form {
     /// Construct an Atom containing a String
-    pub fn atom(s: Span) -> Self {
+    fn atom(s: Span) -> Self {
         Form::Atom(s)
     }
     /// Construct a list of forms
-    pub fn list<I>(src: I) -> Self
+    fn list<I>(src: I) -> Self
         where I: IntoIterator<Item = Form>
     {
         Form::List(src.into_iter().collect())
     }
     /// Construct a List form containing nothing
-    pub fn empty_list() -> Self {
+    fn empty_list() -> Self {
         Form::List(vec![])
     }
 
-    pub fn add_to_list(&mut self, item: Form) {
+    fn add_to_list(&mut self, item: Form) {
         match *self {
             Form::Atom(_) => panic!(),
             Form::List(ref mut l) => l.push(item),
@@ -107,7 +134,7 @@ impl Display for Form {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub enum ReadErrorType {
+enum ReadErrorType {
     EOS,
     EmptyToken, // merge these?
     InvalidToken(String),
@@ -118,28 +145,17 @@ pub enum ReadErrorType {
 
 
 #[derive(Clone, Debug)]
-pub struct ReadError {
+struct ReadError {
     type_: ReadErrorType,
     desc: String,
 }
 
-
-// note: chars do not need to track their position for now, recover that info from InputStream
-// this also should have to public
-// merge into Environment?
-pub struct ReaderEnv {
-    pub stream: InputStream,
-    pub readtable: ReadTable,
-    pub macros: MacroTable,
-    pub output: Vec<ReadError>,
-}
-
-pub struct ReadTable(HashMap<u8, CharSyntaxType>);
-pub struct MacroTable(HashMap<u8, MacroFunction>);
+struct ReadTable(HashMap<u8, CharSyntaxType>);
+struct MacroTable(HashMap<u8, MacroFunction>);
 
 /// The classes of reader macro characters
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub enum MacroCharType {
+enum MacroCharType {
     /// A terminating macro character
     Terminating,
     /// A non-terminating macro character
@@ -148,7 +164,7 @@ pub enum MacroCharType {
 
 /// The lexical classes of input characters
 #[derive(PartialEq, Copy, Clone)]
-pub enum CharSyntaxType {
+enum CharSyntaxType {
     /// An invalid character
     Invalid,
     /// A whitespace character
@@ -170,26 +186,6 @@ enum ReaderState {
     Escaping,
     TokenFinished,
 }
-
-// read all of a string
-pub fn read_all(src: String) -> Result<Vec<Form>, String> {
-    let mut reader = ReaderEnv::new_default(InputStream::new(src));
-
-    match reader.read_all() {
-        Ok(forms) => Ok(forms),
-        Err(_) => Err(reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n")),
-    }
-}
-
-// TODO: move readtables etc. out to Environment, right?
-/// Read a Form from a String
-pub fn read_string(src: String) -> Result<Form, String> {
-    // TODO DI
-    let mut reader = ReaderEnv::new_default(InputStream::new(src));
-    reader.read_token()
-          .map_err(|_| reader.output.iter().map(|e| format!("Error: {}\n", e)).join("\n"))
-}
-
 
 impl From<ReadErrorType> for ReadError {
     fn from(src: ReadErrorType) -> Self {
@@ -216,191 +212,152 @@ impl ::std::error::Error for ReadError {
 }
 
 impl ReadError {
-    pub fn eos() -> Self {
+    fn eos() -> Self {
         ReadErrorType::EOS.into()
     }
-    pub fn empty_token() -> Self {
+    fn empty_token() -> Self {
         ReadErrorType::EmptyToken.into()
     }
-    pub fn invalid_token<S: Into<String>>(token: S) -> Self {
+    fn invalid_token<S: Into<String>>(token: S) -> Self {
         ReadErrorType::InvalidToken(token.into()).into()
     }
-    pub fn invalid_char(c: u8) -> Self {
+    fn invalid_char(c: u8) -> Self {
         ReadErrorType::InvalidChar(c).into()
     }
-    pub fn no_macro_for_char(c: u8) -> Self {
+    fn no_macro_for_char(c: u8) -> Self {
         ReadErrorType::NoMacro(c).into()
     }
-    pub fn other<S: Into<String>>(msg: S) -> Self {
+    fn other<S: Into<String>>(msg: S) -> Self {
         ReadErrorType::Other(msg.into()).into()
     }
 }
 
+/// Ported from the [Common Lisp HyperSpec](http://clhs.lisp.se/Body/02_b.htm)
+fn read_token(stream: &mut InputStream,
+              readtable: &ReadTable,
+              macros: &MacroTable)
+              -> Result<Form, ReadError> {
+    let mut token = Vec::with_capacity(8);
+    let mut state = Reading;
 
-impl ReaderEnv {
-    pub fn new_default(src: InputStream) -> Self {
-        ReaderEnv {
-            stream: src,
-            readtable: ReadTable::default(),
-            macros: MacroTable::default(),
-            output: vec![],
-        }
-    }
-
-    pub fn last_error(&self) -> ReadError {
-        self.output.last().unwrap().clone()
-    }
-
-    pub fn read_all(&mut self) -> Result<Vec<Form>, ()> {
-        let mut results = vec![];
-
-        loop {
-            match self.read_token() {
-                Ok(form) => results.push(form),
-                _ => {
-                    let error_type = self.output.last().unwrap().type_.clone();
-
-                    if error_type == ReadErrorType::EOS ||
-                       (error_type == ReadErrorType::EmptyToken && self.stream.next().is_none()) {
-                        return Ok(results);
+    // step 1
+    loop {
+        match state {
+            Reading => {
+                match stream.next() {
+                    Some(x) => {
+                        match readtable.get(x) {
+                            Invalid => return Err(ReadError::invalid_char(x)),
+                            Whitespace => {} // repeat step 1
+                            MacroChar(_) => {
+                                match macros.get(x) {
+                                    Some(f) => {
+                                        match f(stream, readtable, macros, x) {
+                                            Ok(Some(ast)) => return Ok(ast),
+                                            Ok(None) => {} // repeat step 1
+                                            Err(e) => return Err(e),
+                                        }
+                                    }
+                                    _ => return Err(ReadError::no_macro_for_char(x)),
+                                }
+                            }
+                            SingleEscape => {
+                                match stream.next() {
+                                    Some(y) => {
+                                        token.push(y);
+                                        state = Accumulating;
+                                    }
+                                    None => return Err(ReadError::eos()),
+                                }
+                            }
+                            // enter step 9
+                            MultEscape => state = Escaping,
+                            // enter step 8
+                            TokenChar => {
+                                token.push(x);
+                                state = Accumulating;
+                            }
+                        }
                     }
-                    return Err(());
+                    None => {
+                        return Err(if token.is_empty() {
+                            ReadError::empty_token()
+                        } else {
+                            ReadError::eos()
+                        })
+                    }
                 }
             }
-        }
-    }
-
-    /// Ported from the [Common Lisp HyperSpec](http://clhs.lisp.se/Body/02_b.htm)
-    pub fn read_token(&mut self) -> Result<Form, ()> {
-        macro_rules! ret_err {
-            ($e:expr) => {{
-                self.output.push($e);
-                return Err(());
-            }};
-        }
-
-        let mut token = Vec::with_capacity(8);
-        let mut state = Reading;
-
-        // step 1
-        loop {
-            match state {
-                Reading => {
-                    match self.stream.next() {
-                        Some(x) => {
-                            match self.readtable.get(x) {
-                                Invalid => ret_err!(ReadError::invalid_char(x)),
-                                Whitespace => {} // repeat step 1
-                                MacroChar(_) => {
-                                    match self.macros.get(x) {
-                                        Some(f) => {
-                                            match f(self, x) {
-                                                Ok(Some(ast)) => return Ok(ast),
-                                                Ok(None) => {} // repeat step 1
-                                                Err(e) => return Err(e),
-                                            }
-                                        }
-                                        _ => ret_err!(ReadError::no_macro_for_char(x)),
-                                    }
+            // step 8
+            Accumulating => {
+                loop {
+                    match stream.next() {
+                        Some(y) => {
+                            match readtable.get(y) {
+                                Invalid => return Err(ReadError::invalid_char(y)),
+                                // enter step 10
+                                Whitespace => {
+                                    state = TokenFinished;
+                                    // TODO is this right?
+                                    // stream.unread(); // preserve whitespace
+                                    break;
+                                }
+                                // enter step 10
+                                MacroChar(Terminating) => {
+                                    stream.unread();
+                                    state = TokenFinished;
+                                    break;
                                 }
                                 SingleEscape => {
-                                    match self.stream.next() {
-                                        Some(y) => {
-                                            token.push(y);
-                                            state = Accumulating;
-                                        }
-                                        None => ret_err!(ReadError::eos()),
+                                    match stream.next() {
+                                        // repeat step 8
+                                        Some(z) => token.push(z),
+                                        None => return Err(ReadError::eos()),
                                     }
                                 }
-                                // enter step 9
-                                MultEscape => state = Escaping,
-                                // enter step 8
-                                TokenChar => {
-                                    token.push(x);
-                                    state = Accumulating;
-                                }
+                                MultEscape => {} // enter step 9
+                                // repeat step 8
+                                TokenChar | MacroChar(Nonterminating) => token.push(y),
                             }
                         }
+                        // enter step 10
                         None => {
-                            ret_err!(if token.is_empty() {
-                                ReadError::empty_token()
-                            } else {
-                                ReadError::eos()
-                            })
+                            state = TokenFinished;
+                            break;
                         }
                     }
                 }
-                // step 8
-                Accumulating => {
-                    loop {
-                        match self.stream.next() {
-                            Some(y) => {
-                                match self.readtable.get(y) {
-                                    Invalid => ret_err!(ReadError::invalid_char(y)),
-                                    // enter step 10
-                                    Whitespace => {
-                                        state = TokenFinished;
-                                        // TODO is this right?
-                                        // stream.unread(); // preserve whitespace
-                                        break;
+            }
+            // step 9
+            Escaping => {
+                loop {
+                    match stream.next() {
+                        Some(y) => {
+                            match readtable.get(y) {
+                                // repeat step 9
+                                TokenChar | MacroChar(_) | Whitespace => token.push(y),
+                                SingleEscape => {
+                                    match stream.next() {
+                                        // repeat step 9
+                                        Some(z) => token.push(z),
+                                        None => return Err(ReadError::eos()),
                                     }
-                                    // enter step 10
-                                    MacroChar(Terminating) => {
-                                        self.stream.unread();
-                                        state = TokenFinished;
-                                        break;
-                                    }
-                                    SingleEscape => {
-                                        match self.stream.next() {
-                                            // repeat step 8
-                                            Some(z) => token.push(z),
-                                            None => ret_err!(ReadError::eos()),
-                                        }
-                                    }
-                                    MultEscape => {} // enter step 9
-                                    // repeat step 8
-                                    TokenChar | MacroChar(Nonterminating) => token.push(y),
                                 }
-                            }
-                            // enter step 10
-                            None => {
-                                state = TokenFinished;
-                                break;
-                            }
-                        }
-                    }
-                }
-                // step 9
-                Escaping => {
-                    loop {
-                        match self.stream.next() {
-                            Some(y) => {
-                                match self.readtable.get(y) {
-                                    // repeat step 9
-                                    TokenChar | MacroChar(_) | Whitespace => token.push(y),
-                                    SingleEscape => {
-                                        match self.stream.next() {
-                                            // repeat step 9
-                                            Some(z) => token.push(z),
-                                            None => ret_err!(ReadError::eos()),
-                                        }
-                                    }
-                                    // enter step 8
-                                    MultEscape => {
-                                        state = Accumulating;
-                                        break;
-                                    }
-                                    Invalid => ret_err!(ReadError::invalid_char(y)),
+                                // enter step 8
+                                MultEscape => {
+                                    state = Accumulating;
+                                    break;
                                 }
+                                Invalid => return Err(ReadError::invalid_char(y)),
                             }
-                            None => ret_err!(ReadError::eos()),
                         }
+                        None => return Err(ReadError::eos()),
                     }
                 }
-                // step 10
-                TokenFinished => {
-                    return Ok(Form::atom(Span::new(String::from_utf8_lossy(&*token).into_owned())))
-                }
+            }
+            // step 10
+            TokenFinished => {
+                return Ok(Form::atom(Span::new(String::from_utf8_lossy(&*token).into_owned())))
             }
         }
     }
@@ -410,43 +367,45 @@ impl ReaderEnv {
 impl MacroTable {
     /// Look up a reader macro function for a character in the table
     #[allow(map_clone)]
-    pub fn get(&self, c: u8) -> Option<MacroFunction> {
+    fn get(&self, c: u8) -> Option<MacroFunction> {
         self.0.get(&c).map(|&f| f)
     }
 }
 
 impl ReadTable {
     /// Look up the lexical class of a character in the table
-    pub fn get(&self, c: u8) -> CharSyntaxType {
+    fn get(&self, c: u8) -> CharSyntaxType {
         *self.0.get(&c).unwrap_or(&Invalid)
     }
 }
 
 impl Default for ReadTable {
     fn default() -> Self {
-        ReadTable((0..128u8)
-                      .map(|c| {
-                          (c,
-                           {
-                              match c as char {
-                                  '(' | ')' | ';' => MacroChar(Terminating),
-                                  '_' | '-' | '+' => TokenChar,
-                                  c if c.is_alphanumeric() => TokenChar,
-                                  c if c.is_whitespace() => Whitespace,
-                                  _ => Invalid,
-                              }
-                          })
-                      })
-                      .collect())
+        let mut table = HashMap::new();
+
+        for k in 0..128u8 {
+            let v = match k as char {
+                '(' | ')' | ';' => MacroChar(Terminating),
+                '_' | '-' | '+' => TokenChar,
+                c if c.is_alphanumeric() => TokenChar,
+                c if c.is_whitespace() => Whitespace,
+                _ => Invalid,
+            };
+
+            table.insert(k, v);
+        }
+
+        ReadTable(table)
     }
 }
 
 impl Debug for ReadTable {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let entries = (0..self.0.len())
+                          .map(|i| i as u8 as char)
+                          .zip(self.0.iter());
         f.debug_map()
-         .entries((0..self.0.len())
-                      .map(|i| i as u8 as char)
-                      .zip(self.0.iter()))
+         .entries(entries)
          .finish()
     }
 }
@@ -454,9 +413,9 @@ impl Debug for ReadTable {
 impl Default for MacroTable {
     fn default() -> Self {
         let mut mt: HashMap<u8, MacroFunction> = HashMap::new();
-        mt.insert(b';', core::line_comment_reader);
-        mt.insert(b'(', core::left_paren_reader);
-        mt.insert(b')', core::right_paren_reader);
+        mt.insert(b';', line_comment_reader);
+        mt.insert(b'(', left_paren_reader);
+        mt.insert(b')', right_paren_reader);
         MacroTable(mt)
     }
 }
@@ -482,6 +441,53 @@ impl Display for ReadError {
 }
 
 
+/// Reader macro function for line comments.
+fn line_comment_reader(stream: &mut InputStream,
+                       _: &ReadTable,
+                       _: &MacroTable,
+                       _: u8)
+                       -> Result<Option<Form>, ReadError> {
+    loop {
+        match stream.next() {
+            Some(b'\n') | None => break,
+            Some(_) => {}
+        }
+    }
+    Ok(None)
+}
+
+/// Reader macro function for reading list s-expressions delimited by parentheses.
+fn left_paren_reader(stream: &mut InputStream,
+                     readtable: &ReadTable,
+                     macros: &MacroTable,
+                     _: u8)
+                     -> Result<Option<Form>, ReadError> {
+    let mut list = vec![];
+
+    loop {
+        match stream.next() {
+            Some(w) if readtable.get(w) == Whitespace => {}
+            Some(c) if c == b')' => return Ok(Some(Form::list(list))),
+            Some(_) => {
+                stream.unread();
+                list.push(try!(read_token(stream, readtable, macros)));
+            }
+            _ => {
+                return Err(ReadError::eos());
+            }
+        }
+    }
+}
+
+/// Reader macro function to abort on unexpected closing parentheses.
+fn right_paren_reader(_: &mut InputStream,
+                      _: &ReadTable,
+                      _: &MacroTable,
+                      _: u8)
+                      -> Result<Option<Form>, ReadError> {
+    return Err(ReadError::other("Unexpected right parenthesis"));
+}
+
 #[cfg(test)]
 mod test {
     use itertools::*;
@@ -491,7 +497,41 @@ mod test {
     fn test_read_all() {
         let input = "hello world".to_owned();
         let output = "hello world";
-        assert_eq!(reader::read_all(input).unwrap().iter().map(|f| f.to_string()).join(" "),
+        assert_eq!(reader::read_forms(input)
+                       .unwrap()
+                       .iter()
+                       .map(|f| f.to_string())
+                       .join(" "),
                    output);
+    }
+
+    #[test]
+    fn test_line_comment_reader() {
+        let input = "; hello\nworld".to_owned();
+        let output = "world";
+        assert_eq!(reader::read_forms(input)
+                       .unwrap()
+                       .iter()
+                       .map(|f| f.to_string())
+                       .join(" "),
+                   output);
+    }
+
+    #[test]
+    fn test_left_paren_reader() {
+        let input = "(hello world)".to_owned();
+        let output = input.clone();
+        assert_eq!(reader::read_forms(input)
+                       .unwrap()
+                       .iter()
+                       .map(|f| f.to_string())
+                       .join(" "),
+                   output);
+    }
+
+    #[test]
+    fn test_right_paren_reader() {
+        let input = ")".to_owned();
+        assert!(reader::read_forms(input).is_err());
     }
 }

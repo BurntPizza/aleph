@@ -4,7 +4,7 @@ use itertools::*;
 
 use std::error::Error;
 
-use reader::{self, Form, InputStream};
+use reader::{self, Form};
 use analyzer::{self, AstNode};
 use symbol_table::*;
 use vm::*;
@@ -22,10 +22,9 @@ pub fn interpret<T: Into<String>>(input: T) -> String {
 }
 
 fn read(input: String) -> Result<Vec<Form>, Box<Error>> {
-    let mut reader = reader::ReaderEnv::new_default(InputStream::new(input));
-    reader.read_all().map_err(|_| reader.last_error().into())
-
+    reader::read_forms(input)
 }
+
 fn analyze(input: Vec<Form>) -> Result<(AstNode, SymbolTable), Box<Error>> {
     analyzer::analyze_from_root(input).map_err(Into::into)
 }

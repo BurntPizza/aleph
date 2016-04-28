@@ -36,7 +36,7 @@ pub fn analyze_from_root(forms: Vec<Form>) -> Result<(AstNode, SymbolTable), Ana
 fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, AnalyzerError> {
     match *form {
         Form::Atom(ref s) => {
-            let text = &*s.text;
+            let text = &*s.text();
 
             match text.parse::<i64>() {
                 Ok(val) => Ok(AstNode::int_const(val)),

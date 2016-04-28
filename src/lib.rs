@@ -15,7 +15,6 @@ extern crate custom_derive;
 extern crate enum_derive;
 
 pub mod symbol_table;
-pub mod core;
 pub mod reader;
 pub mod analyzer;
 pub mod interpreter; // this will eventually be entirely replaced by vm
