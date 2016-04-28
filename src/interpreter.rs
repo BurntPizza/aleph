@@ -277,7 +277,7 @@ fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
 }
 
 fn exec(input: Program) -> String {
-    format!("{}", exec_program(input))
+    exec_program(input)
 }
 
 
@@ -308,10 +308,4 @@ mod test {
                                  (+ a 2)))"),
                    "3");
     }
-
-    // #[test]
-    // fn let_expr() {
-    //     assert_eq!(interpret("(let (x 1 y -1) (+ x y 5))"), "6");
-    // }
-
 }

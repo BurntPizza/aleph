@@ -64,7 +64,7 @@ impl SymbolTable {
     }
 
     pub fn lookup_id(&self, id: u32) -> Option<Record> {
-        self.id_map.find(&id).map(|r| r.clone())
+        self.id_map.find(&id).cloned()
     }
 
     // TODO tree api

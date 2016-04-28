@@ -216,7 +216,7 @@ impl FnTable {
     }
 
     fn fn_def_id_at_addr(&self, fn_addr: FnAddr) -> Option<FnDefId> {
-        self.fn_addr_to_fn_def_id_table.get(&fn_addr).map(|&id| id)
+        self.fn_addr_to_fn_def_id_table.get(&fn_addr).cloned()
     }
 
     fn get_fn_addr(&self, fn_def_id: FnDefId) -> Option<FnAddr> {
@@ -313,7 +313,7 @@ impl ProgramBuilder {
 
     pub fn make_locals(&mut self, param_ids: &[u32]) {
         let mut cfd = self.current_fn_def();
-        let ref mut bindings = cfd.bindings;
+        let bindings = &mut cfd.bindings;
 
         // note: reversed (popping off of stack)
         for (idx, &id) in param_ids.iter().enumerate().rev() {
@@ -544,7 +544,7 @@ impl Debug for Program {
         }
 
         fn fmt_label(self_: &Program, fn_def_id: FnDefId) -> String {
-            format!("{}", self_.env.lookup_id(fn_def_id.into()).unwrap().ident())
+            self_.env.lookup_id(fn_def_id.into()).unwrap().ident().to_owned()
         }
 
         try!(writeln!(f, "Constant table:"));
