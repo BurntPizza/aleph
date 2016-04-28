@@ -12,9 +12,6 @@ use self::MacroCharType::*;
 use self::ReaderState::*;
 use self::ReadErrorType::*;
 
-/// The type of functions implementing reader macros
-type MacroFunction = fn(&mut InputStream, &ReadTable, &MacroTable, u8)
-                        -> Result<Option<Form>, ReadError>;
 
 pub fn read_forms(input: String) -> Result<Vec<Form>, Box<Error>> {
     let mut stream = InputStream::new(input);
@@ -38,6 +35,55 @@ pub fn read_forms(input: String) -> Result<Vec<Form>, Box<Error>> {
         }
     }
 }
+
+/// Lexical program representation: untyped s-expressions.
+#[derive(Debug, PartialEq, Clone)]
+pub struct Form {
+    kind: FormKind,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum FormKind {
+    Atom(String),
+    List(Vec<Form>),
+}
+
+impl Form {
+    pub fn kind(&self) -> &FormKind {
+        &self.kind
+    }
+
+    fn new(kind: FormKind) -> Self {
+        Form { kind: kind }
+    }
+
+    /// Construct an Atom containing a String
+    fn atom(s: String) -> Self {
+        Form::new(FormKind::Atom(s))
+    }
+    /// Construct a list of forms
+    fn list<I>(src: I) -> Self
+        where I: IntoIterator<Item = Form>
+    {
+        Form::new(FormKind::List(src.into_iter().collect()))
+    }
+    /// Construct a List form containing nothing
+    fn empty_list() -> Self {
+        Form::new(FormKind::List(vec![]))
+    }
+
+    fn add_to_list(&mut self, item: Form) {
+        match self.kind {
+            FormKind::Atom(_) => panic!(),
+            FormKind::List(ref mut l) => l.push(item),
+        }
+    }
+}
+
+/// The type of functions implementing reader macros
+type MacroFunction = fn(&mut InputStream, &ReadTable, &MacroTable, u8)
+                        -> Result<Option<Form>, ReadError>;
+
 
 // Note: guaranteed to be ASCII
 #[derive(Debug, Clone)]
@@ -89,45 +135,11 @@ impl Span {
         &*self.text
     }
 }
-
-/// Lexical program representation: untyped s-expressions.
-#[derive(Debug, PartialEq, Clone)]
-pub enum Form {
-    /// A token, such as an identifier, number, or anything that isn't a `List`.
-    Atom(Span),
-    /// A list of `Form`s, usually delimited by parentheses.
-    List(Vec<Form>),
-}
-
-impl Form {
-    /// Construct an Atom containing a String
-    fn atom(s: Span) -> Self {
-        Form::Atom(s)
-    }
-    /// Construct a list of forms
-    fn list<I>(src: I) -> Self
-        where I: IntoIterator<Item = Form>
-    {
-        Form::List(src.into_iter().collect())
-    }
-    /// Construct a List form containing nothing
-    fn empty_list() -> Self {
-        Form::List(vec![])
-    }
-
-    fn add_to_list(&mut self, item: Form) {
-        match *self {
-            Form::Atom(_) => panic!(),
-            Form::List(ref mut l) => l.push(item),
-        }
-    }
-}
-
 impl Display for Form {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let s = match *self {
-            Form::Atom(ref s) => s.text.clone(),
-            Form::List(ref list) => format!("({})", list.iter().join(" ")),
+        let s = match self.kind {
+            FormKind::Atom(ref s) => s.clone(),
+            FormKind::List(ref list) => format!("({})", list.iter().join(" ")),
         };
         write!(f, "{}", s)
     }
@@ -356,9 +368,7 @@ fn read_token(stream: &mut InputStream,
                 }
             }
             // step 10
-            TokenFinished => {
-                return Ok(Form::atom(Span::new(String::from_utf8_lossy(&*token).into_owned())))
-            }
+            TokenFinished => return Ok(Form::atom(String::from_utf8_lossy(&*token).into_owned())),
         }
     }
 }

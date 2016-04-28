@@ -2,7 +2,7 @@
 use std::error;
 use std::fmt::{self, Display, Formatter};
 
-use reader::Form;
+use reader::{Form, FormKind};
 use symbol_table::*;
 
 pub fn analyze_from_root(forms: Vec<Form>) -> Result<(AstNode, SymbolTable), AnalyzerError> {
@@ -34,9 +34,9 @@ pub fn analyze_from_root(forms: Vec<Form>) -> Result<(AstNode, SymbolTable), Ana
 
 #[allow(option_map_unwrap_or_else)] // map_or_else has lifetime problems in this case
 fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, AnalyzerError> {
-    match *form {
-        Form::Atom(ref s) => {
-            let text = &*s.text();
+    match *form.kind() {
+        FormKind::Atom(ref s) => {
+            let text = &*s.clone();
 
             match text.parse::<i64>() {
                 Ok(val) => Ok(AstNode::int_const(val)),
@@ -53,7 +53,7 @@ fn analyze_in_env(form: &Form, env: &mut SymbolTable) -> Result<AstNode, Analyze
                 }
             }
         }
-        Form::List(ref v) => {
+        FormKind::List(ref v) => {
             match v.len() {
                 0 => Err(AnalyzerError::empty_form()),
                 _ => {
