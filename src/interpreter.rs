@@ -4,7 +4,7 @@ use itertools::*;
 
 use std::error::Error;
 
-use reader::{self, Form};
+use reader::{self, Form, MacroExpansionEnv};
 use analyzer::{self, AstNode};
 use symbol_table::*;
 use vm::*;
@@ -13,9 +13,9 @@ use vm::*;
 // TODO: return type
 pub fn interpret<T: Into<String>>(input: T) -> String {
     let input = input.into();
-    let form = read(input).unwrap();
-    let (ast, env) = analyze(form).unwrap();
-    // let (ast, env) = macroexpand(ast, env).unwrap();
+    let forms = read(input).unwrap();
+    let (forms, macro_env) = macroexpand(forms).unwrap();
+    let (ast, env) = analyze(forms, macro_env).unwrap();
     let program = compile(ast, env).unwrap();
 
     exec(program)
@@ -25,27 +25,19 @@ fn read(input: String) -> Result<Vec<Form>, Box<Error>> {
     reader::read_forms(input)
 }
 
-fn analyze(input: Vec<Form>) -> Result<(AstNode, SymbolTable), Box<Error>> {
+
+fn macroexpand(forms: Vec<Form>) -> Result<(Vec<Form>, MacroExpansionEnv), Box<Error>> {
+    reader::macroexpand_forms(forms)
+}
+
+
+fn analyze(input: Vec<Form>,
+           macro_env: MacroExpansionEnv)
+           -> Result<(AstNode, SymbolTable), Box<Error>> {
+
     analyzer::analyze_from_root(input).map_err(Into::into)
 }
 
-fn macroexpand(mut form: AstNode, env: SymbolTable) -> Result<(AstNode, SymbolTable), Box<Error>> {
-    enum ExpansionResult {
-        Expanded(AstNode),
-        NotExpanded(AstNode),
-    }
-
-    fn macroexpand_1(form: AstNode, env: &SymbolTable) -> ExpansionResult {
-        unimplemented!()
-    }
-
-    loop {
-        match macroexpand_1(form, &env) {
-            ExpansionResult::Expanded(new_ast) => form = new_ast,
-            ExpansionResult::NotExpanded(old_ast) => return Ok((old_ast, env)),
-        }
-    }
-}
 
 fn compile(ast: AstNode, mut env: SymbolTable) -> Result<Program, Box<Error>> {
     // use scopes!
@@ -306,5 +298,12 @@ mod test {
                                (fn (a)   \
                                  (+ a 2)))"),
                    "3");
+    }
+
+    #[test]
+    fn let_form() {
+        assert_eq!(interpret("(let (a 4 b 6 c 8) \
+                                (+ a b c))"),
+                   "18");
     }
 }

@@ -53,6 +53,13 @@ impl Form {
         &self.kind
     }
 
+    fn into_children(self) -> Vec<Form> {
+        match self.kind {
+            FormKind::Atom(s) => panic!("{} is not a List", s),
+            FormKind::List(v) => v,
+        }
+    }
+
     fn new(kind: FormKind) -> Self {
         Form { kind: kind }
     }
@@ -80,9 +87,119 @@ impl Form {
     }
 }
 
+fn expand_let_form(forms: Vec<Form>) -> Result<Form, Box<Error>> {
+    if forms.len() < 2 {
+        return Err("let form must have at least two arguments".into());
+    }
+
+    let (args_list_form, body_forms_list) = forms.split_first().unwrap();
+
+    match *args_list_form.kind() {
+        FormKind::Atom(ref s) => {
+            Err(format!("1st argument of let form must be a list: {}", s).into())
+        }
+        FormKind::List(ref arg_forms) => {
+            if arg_forms.len() % 2 != 0 {
+                return Err("argument list of let form must have even number of forms".into());
+            }
+
+            let (bindings, vals): (Vec<(_, Form)>, Vec<(_, Form)>) = arg_forms.iter()
+                                                                              .cloned()
+                                                                              .enumerate()
+                                                                              .partition(|p| {
+                                                                                  p.0 % 2 == 0
+                                                                              });
+
+            let bindings = bindings.into_iter().map(|(_, form)| form);
+            let vals = vals.into_iter().map(|(_, form)| form);
+
+            // TODO more checks here
+
+            let fn_form = Form::atom("fn".into());
+            let arg_list = Form::list(bindings);
+            let body = body_forms_list.iter().cloned();
+            let fn_call = Form::list(vec![fn_form, arg_list].into_iter().chain(body));
+
+            Ok(Form::list(::std::iter::once(fn_call).chain(vals)))
+        }
+    }
+}
+
+// (implicit) macro form, arg forms -> result form
+type MacroExpanderFn = fn(Vec<Form>) -> Result<Form, Box<Error>>;
+
+pub struct MacroExpansionEnv {
+    table: HashMap<String, MacroExpanderFn>,
+}
+
+impl MacroExpansionEnv {
+    fn new() -> Self {
+        let mut table = HashMap::new();
+
+        table.insert("let".into(), expand_let_form as MacroExpanderFn);
+
+        MacroExpansionEnv { table: table }
+    }
+
+    // Ok(Some(fn)) => is a macro form, and this is it's expander
+    // Ok(None) => not a macro form
+    // Err => some other problem (having this here just in case)
+    fn lookup(&self, form: &Form) -> Result<Option<MacroExpanderFn>, Box<Error>> {
+        match *form.kind() {
+            FormKind::List(ref v) => {
+                match v.len() {
+                    0 => Ok(None),
+                    _ => self.lookup(&v[0]), // should only allow an Atom? (investigate with tests)
+                }
+            }
+            FormKind::Atom(ref s) => Ok(self.table.get(s).cloned()),
+        }
+    }
+}
+
+fn macroexpand(mut form: Form, env: &MacroExpansionEnv) -> Result<Form, Box<Error>> {
+    loop {
+        match try!(macroexpand_1(form, &env)) {
+            ExpansionResult::Expanded(new_form) => form = new_form,
+            ExpansionResult::NotExpanded(old_form) => return Ok(old_form),
+        }
+    }
+}
+
+enum ExpansionResult {
+    Expanded(Form),
+    NotExpanded(Form),
+}
+
+fn macroexpand_1(form: Form, env: &MacroExpansionEnv) -> Result<ExpansionResult, Box<Error>> {
+    match try!(env.lookup(&form)) {
+        Some(expand) => {
+            let forms = form.into_children().into_iter().skip(1).collect();
+            Ok(ExpansionResult::Expanded(try!(expand(forms))))
+        }
+        None => Ok(ExpansionResult::NotExpanded(form)),
+    }
+}
+
+
+// will need to take env as mut arg once defmacro exists
+// (via populate_namespaces pass before macroexpansion)
+pub fn macroexpand_forms(forms: Vec<Form>) -> Result<(Vec<Form>, MacroExpansionEnv), Box<Error>> {
+    let env = MacroExpansionEnv::new();
+    let mut results = Vec::with_capacity(forms.len());
+
+    for form in forms {
+        results.push(try!(macroexpand(form, &env)));
+    }
+
+    Ok((results, env))
+}
+
+
+
 /// The type of functions implementing reader macros
-type MacroFunction = fn(&mut InputStream, &ReadTable, &MacroTable, u8)
-                        -> Result<Option<Form>, ReadError>;
+type ReaderMacroFunction = fn(&mut InputStream, &ReadTable, &MacroTable, u8)
+                              -> Result<Option<Form>, ReadError>;
 
 
 // Note: guaranteed to be ASCII
@@ -163,7 +280,7 @@ struct ReadError {
 }
 
 struct ReadTable(HashMap<u8, CharSyntaxType>);
-struct MacroTable(HashMap<u8, MacroFunction>);
+struct MacroTable(HashMap<u8, ReaderMacroFunction>);
 
 /// The classes of reader macro characters
 #[derive(Debug, PartialEq, Copy, Clone)]
@@ -377,7 +494,7 @@ fn read_token(stream: &mut InputStream,
 impl MacroTable {
     /// Look up a reader macro function for a character in the table
     #[allow(map_clone)]
-    fn get(&self, c: u8) -> Option<MacroFunction> {
+    fn get(&self, c: u8) -> Option<ReaderMacroFunction> {
         self.0.get(&c).map(|&f| f)
     }
 }
@@ -422,7 +539,7 @@ impl Debug for ReadTable {
 
 impl Default for MacroTable {
     fn default() -> Self {
-        let mut mt: HashMap<u8, MacroFunction> = HashMap::new();
+        let mut mt: HashMap<u8, ReaderMacroFunction> = HashMap::new();
         mt.insert(b';', line_comment_reader);
         mt.insert(b'(', left_paren_reader);
         mt.insert(b')', right_paren_reader);
@@ -504,7 +621,7 @@ mod test {
     use reader;
 
     #[test]
-    fn test_read_all() {
+    fn read_all() {
         let input = "hello world".to_owned();
         let output = "hello world";
         assert_eq!(reader::read_forms(input)
@@ -516,7 +633,17 @@ mod test {
     }
 
     #[test]
-    fn test_line_comment_reader() {
+    fn empty_list() {
+        assert_eq!(reader::read_forms("()".into())
+                       .unwrap()
+                       .iter()
+                       .map(|f| f.to_string())
+                       .join(" "),
+                   "()");
+    }
+
+    #[test]
+    fn line_comment_reader() {
         let input = "; hello\nworld".to_owned();
         let output = "world";
         assert_eq!(reader::read_forms(input)
@@ -528,7 +655,7 @@ mod test {
     }
 
     #[test]
-    fn test_left_paren_reader() {
+    fn left_paren_reader() {
         let input = "(hello world)".to_owned();
         let output = input.clone();
         assert_eq!(reader::read_forms(input)
@@ -540,8 +667,27 @@ mod test {
     }
 
     #[test]
-    fn test_right_paren_reader() {
+    fn right_paren_reader() {
         let input = ")".to_owned();
         assert!(reader::read_forms(input).is_err());
+    }
+
+    #[test]
+    fn let_form() {
+        let input = "(let (x xd     \
+                           y yd)    \
+                       (body1) body2)"
+                        .into();
+
+        let output = "((fn (x y) (body1) body2) xd yd)";
+
+        assert_eq!(reader::read_forms(input)
+                       .and_then(reader::macroexpand_forms)
+                       .unwrap()
+                       .0
+                       .iter()
+                       .map(|f| f.to_string())
+                       .join(" "),
+                   output);
     }
 }
