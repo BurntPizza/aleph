@@ -14,6 +14,9 @@ extern crate custom_derive;
 #[macro_use]
 extern crate enum_derive;
 
+mod lang;
+mod read;
+
 pub mod reader;
 pub mod analyzer;
 pub mod symbol_table;

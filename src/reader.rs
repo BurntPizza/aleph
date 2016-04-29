@@ -152,6 +152,7 @@ impl MacroExpansionEnv {
                     _ => self.lookup(&v[0]), // should only allow an Atom? (investigate with tests)
                 }
             }
+            // should this be here?
             FormKind::Atom(ref s) => Ok(self.table.get(s).cloned()),
         }
     }
@@ -174,6 +175,7 @@ enum ExpansionResult {
 fn macroexpand_1(form: Form, env: &MacroExpansionEnv) -> Result<ExpansionResult, Box<Error>> {
     match try!(env.lookup(&form)) {
         Some(expand) => {
+            // it's a macro invocation, expand it
             let forms = form.into_children().into_iter().skip(1).collect();
             Ok(ExpansionResult::Expanded(try!(expand(forms))))
         }

@@ -306,4 +306,15 @@ mod test {
                                 (+ a b c))"),
                    "18");
     }
+
+    // need proper scoping for this
+    // #[test]
+    // fn local_capturing_fns() {
+    //     assert_eq!(interpret("((fn (a b)       \
+    //                              ((fn (c)      \
+    //                                 (+ a b c)) \
+    //                               6))          \
+    //                            3 1)"),
+    //                "10");
+    // }
 }
