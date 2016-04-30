@@ -2,10 +2,10 @@
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 
-use lang::{Env, InputStream, Form, AtomKind, ScopeId, Statement, SourcePos};
+use lang::{self, Env, InputStream, Form, AtomKind, ScopeId, Directive, Expr};
 use lang::CharSyntaxType::*;
 
-pub fn read(env: &mut Env, stream: &mut InputStream) -> Result<Form, Box<Error>> {
+pub fn read(env: &mut Env, stream: &mut InputStream) -> Result<Vec<Form>, Box<Error>> {
     let mut results = vec![];
 
     loop {
@@ -16,18 +16,157 @@ pub fn read(env: &mut Env, stream: &mut InputStream) -> Result<Form, Box<Error>>
 
                 if error_type == ReadErrorType::EOS ||
                    (error_type == ReadErrorType::EmptyToken && stream.next().is_none()) {
-                    let result = Form::Statement(Statement::Namespace {
-                        name: "default".to_owned(),
-                        forms: results,
-                    });
-                    return Ok(result);
+                    break;
                 }
                 return Err(e.into());
             }
         }
     }
+
+    sexps_to_forms(env, results)
 }
 
+fn sexps_to_forms(env: &mut Env, sexps: Vec<Sexp>) -> Result<Vec<Form>, Box<Error>> {
+    sexps.into_iter().map(|sexp| sexp_to_form(env, sexp)).collect()
+}
+
+fn sexp_to_form(env: &mut Env, sexp: Sexp) -> Result<Form, Box<Error>> {
+    match sexp {
+        Sexp::Atom(span, token) => {
+            let id = env.add_record(token, AtomKind::Var, span);
+            Ok(Form::Expr(Expr::Atom(id)))
+        }
+        Sexp::List(span, mut sexps) => {
+            match sexps.len() {
+                0 => {
+                    let id = env.add_record("()", AtomKind::Var, span);
+                    Ok(Form::Expr(Expr::Atom(id)))
+                }
+                _ => {
+                    let first = sexps.remove(0);
+
+                    match first {
+                        Sexp::List(span, sexps) => {
+                            //
+                            Err(unimplemented!())
+                        }
+                        Sexp::Atom(span, token) => {
+                            if lang::is_special(&*token) {
+                                parse_special_form(env, token, sexps, span)
+                            } else {
+                                // kind might be/need overwritten?
+                                let id = env.add_record(token, AtomKind::Var, span);
+                                let callee = Form::Expr(Expr::Atom(id));
+                                let args = try!(sexps_to_forms(env, sexps));
+
+                                Ok(Form::Expr(Expr::Inv(Box::new(callee), args)))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn parse_special_form(env: &mut Env,
+                      token: String,
+                      args: Vec<Sexp>,
+                      span: Span)
+                      -> Result<Form, Box<Error>> {
+    match &*token {
+        "let" => parse_let(env, args, span),
+        "if" => parse_if(env, args, span),
+        "fn" => parse_fn(env, args, span),
+        "do" => parse_do(env, args, span),
+        "def" => parse_def(env, args, span),
+        "ns" => parse_ns(env, args, span),
+        "use" => parse_use(env, args, span),
+        "macro" => parse_macro(env, args, span),
+        "defreader" => parse_defreader(env, args, span),
+        _ => unreachable!(),
+    }
+}
+
+fn parse_bindings(env: &mut Env, sexp: Sexp) -> Result<Form, Box<Error>> {
+    match sexp {
+        Sexp::Atom(..) => Err("Bindings list must be a list".into()),
+        Sexp::List(_, children) => {
+            // assert that all children are suitable Atoms
+
+            for child in children.iter() {
+                try!(match *child {
+                    Sexp::Atom(_, ref token) => {
+                        if lang::is_special(token) {
+                            Err(Box::<Error>::from(format!("Binding cannot be keyword: {}", token)))
+                        } else {
+                            Ok(())
+                        }
+                    }
+                    Sexp::List(..) => Err(format!("Binding in list must be symbol").into()),
+                });
+            }
+
+            Ok(Form::Expr(Expr::BindingsList(try!(sexps_to_forms(env, children)))))
+        }
+    }
+}
+
+
+fn parse_let(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    unimplemented!()
+}
+
+fn parse_if(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    unimplemented!()
+}
+
+fn parse_fn(env: &mut Env, mut args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    // assert args >= 2 (param list, body...)
+    if args.len() < 2 {
+        return Err("fn needs at least 2 args".into());
+    }
+
+    args.push(Sexp::Atom(Span::new(0, 0), "do".to_owned()));
+
+    let bindings_sexp = args.swap_remove(0);
+    let body_sexps = args;
+
+    let bindings_form = try!(parse_bindings(env, bindings_sexp));
+    let body_form = try!(sexp_to_form(env, Sexp::List(span, body_sexps)));
+
+    Ok(Form::Expr(Expr::FnExpr(Box::new(bindings_form), Box::new(body_form))))
+}
+
+fn parse_do(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    if args.is_empty() {
+        return Err("do must have at least 1 arg".into());
+    }
+
+    // TODO: more asserts?
+
+    Ok(Form::Expr(Expr::DoExpr(try!(sexps_to_forms(env, args)))))
+}
+
+fn parse_def(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    unimplemented!()
+}
+
+fn parse_ns(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    unimplemented!()
+}
+
+fn parse_use(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    unimplemented!()
+}
+
+fn parse_macro(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    unimplemented!()
+}
+
+fn parse_defreader(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    unimplemented!()
+}
 
 /// The type of functions implementing reader macros
 #[derive(Debug, PartialEq, Clone)]
@@ -56,10 +195,30 @@ enum ReaderState {
 }
 
 pub type ReaderMacroFunction = fn(&mut InputStream, &mut Env, u8)
-                                  -> ::std::result::Result<Option<Form>, ReadError>;
+                                  -> ::std::result::Result<Option<Sexp>, ReadError>;
+
+#[derive(Debug, Copy, Clone)]
+pub struct Span {
+    idx: usize,
+    len: usize,
+}
+
+impl Span {
+    pub fn new(idx: usize, len: usize) -> Self {
+        Span {
+            idx: idx,
+            len: len,
+        }
+    }
+}
+
+pub enum Sexp {
+    Atom(Span, String),
+    List(Span, Vec<Sexp>),
+}
 
 /// Ported from the [Common Lisp HyperSpec](http://clhs.lisp.se/Body/02_b.htm)
-fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<Form, ReadError> {
+fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<Sexp, ReadError> {
 
     use lang::MacroCharType::*;
     use self::ReaderState::*;
@@ -186,17 +345,8 @@ fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<
             // step 10
             TokenFinished => {
                 let token = String::from_utf8(token).unwrap();
-
-                if env.is_special(&token) {
-                    return Err(ReadError::other(format!("Cannot shadow special form `{}`", token))
-                                   .into());
-                }
-
-                let scope = ScopeId::from(0); // TODO!!
-                let position = stream.pos();
-                let span = SourcePos::new(position, token.len() as u32);
-                let id = env.insert(token, AtomKind::Var, scope, span);
-                return Ok(Form::atom(id));
+                let span = Span::new(stream.pos(), token.len());
+                return Ok(Sexp::Atom(span, token));
             }
         }
     }
@@ -261,7 +411,7 @@ impl ReadError {
 pub fn line_comment_reader(stream: &mut InputStream,
                            _: &mut Env,
                            _: u8)
-                           -> Result<Option<Form>, ReadError> {
+                           -> Result<Option<Sexp>, ReadError> {
     loop {
         match stream.next() {
             Some(b'\n') | None => break,
@@ -275,7 +425,7 @@ pub fn line_comment_reader(stream: &mut InputStream,
 pub fn left_paren_reader(stream: &mut InputStream,
                          env: &mut Env,
                          _: u8)
-                         -> Result<Option<Form>, ReadError> {
+                         -> Result<Option<Sexp>, ReadError> {
 
     let position = stream.pos() - 1;
     let mut list = vec![];
@@ -285,8 +435,8 @@ pub fn left_paren_reader(stream: &mut InputStream,
             Some(w) if env.lookup_syntax_type(w) == Whitespace => {}
             Some(c) if c == b')' => {
                 let len = stream.pos() - position;
-                let pos = SourcePos::new(position, len);
-                return Ok(Some(Form::list(env, pos, list)));
+                let span = Span::new(position, len);
+                return Ok(Some(Sexp::List(span, list)));
             }
             Some(_) => {
                 stream.unread();
@@ -303,6 +453,6 @@ pub fn left_paren_reader(stream: &mut InputStream,
 pub fn right_paren_reader(_: &mut InputStream,
                           _: &mut Env,
                           _: u8)
-                          -> Result<Option<Form>, ReadError> {
+                          -> Result<Option<Sexp>, ReadError> {
     return Err(ReadError::other("Unexpected right parenthesis"));
 }

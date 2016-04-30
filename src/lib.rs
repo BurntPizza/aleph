@@ -16,9 +16,10 @@ extern crate enum_derive;
 
 mod lang;
 mod read;
+mod census;
 
-pub mod reader;
-pub mod analyzer;
-pub mod symbol_table;
-pub mod interpreter; // this will eventually be entirely replaced by vm
-pub mod vm;
+// pub mod reader;
+// pub mod analyzer;
+// pub mod symbol_table;
+// pub mod interpreter; // this will eventually be entirely replaced by vm
+// pub mod vm;

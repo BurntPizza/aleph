@@ -7,7 +7,7 @@ use std::convert::Into;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 
-use read;
+use read::{self, Span};
 
 // (syntactic) Forms:
 // statement
@@ -48,24 +48,16 @@ use read;
 pub type Table<K, V> = HashMap<K, V>;
 pub type Result<T> = ::std::result::Result<T, Box<Error>>;
 
-fn read_in_default_ns_and_env<T>(input: T) -> (Form, Env)
+fn read_in_default_ns_and_env<T>(input: T) -> (Vec<Form>, Env)
     where T: Into<String>
 {
     let mut env = Env::new("default");
     let mut stream = InputStream::new(input.into());
 
-    (read(&mut env, &mut stream).unwrap(), env)
+    (read::read(&mut env, &mut stream).unwrap(), env)
 }
 
-fn read(env: &mut Env, stream: &mut InputStream) -> Result<Form> {
-    read::read(env, stream)
-}
-
-fn census(env: &mut Env, form: Form) -> Result<Form> {
-    unimplemented!()
-}
-
-fn macroexpand(env: &Env, form: Form) -> Result<Form> {
+fn macroexpand(env: &Env, form: Vec<Form>) -> Result<Vec<Form>> {
     unimplemented!()
 }
 
@@ -80,6 +72,9 @@ fn fully_parsed(env: &Env, form: &Form) -> bool {
                         AtomKind::Special => true,
                     }
                 }
+                Expr::DoExpr(..) |
+                Expr::BindingsList(..) |
+                Expr::FnExpr(..) => true,
                 Expr::Inv(ref callee, ref args) => {
                     if !fully_parsed(env, &**callee) {
                         return false;
@@ -95,13 +90,13 @@ fn fully_parsed(env: &Env, form: &Form) -> bool {
                 }
             }
         }
-        Form::Statement(_) => false,
+        Form::Directive(_) => false,
     }
 }
 
 #[derive(Clone, Debug)]
 pub enum Form {
-    Statement(Statement),
+    Directive(Directive),
     Expr(Expr),
 }
 
@@ -110,7 +105,7 @@ impl Form {
         Form::Expr(Expr::Atom(id))
     }
 
-    pub fn list<T>(env: &mut Env, pos: SourcePos, items: T) -> Self
+    pub fn list<T>(env: &mut Env, pos: Span, items: T) -> Self
         where T: IntoIterator<Item = Form>
     {
         let mut items = items.into_iter();
@@ -121,7 +116,7 @@ impl Form {
                     Form::Expr(expr) => {
                         Form::Expr(Expr::Inv(Box::new(Form::Expr(expr)), items.collect()))
                     }
-                    Form::Statement(sta) => {
+                    Form::Directive(sta) => {
                         //
                         unimplemented!()
                     }
@@ -136,17 +131,23 @@ impl Form {
     }
 }
 
-// fn is_statement<T>(symbol: T) -> bool
-//     where T: AsRef<str>
-// {
-//     ["def", "ns", "use", "defreader"].contains(&symbol.as_ref())
-// }
+pub fn is_special<T>(symbol: T) -> bool
+    where T: AsRef<str>
+{
+    ["let", "if", "fn", "do", "def", "ns", "use", "macro", "defreader"].contains(&symbol.as_ref())
+}
+
+
+fn is_statement<T>(symbol: T) -> bool
+    where T: AsRef<str>
+{
+    ["def", "ns", "use", "defreader"].contains(&symbol.as_ref())
+}
 
 #[derive(Clone, Debug)]
-pub enum Statement {
+pub enum Directive {
     Namespace {
         name: String,
-        forms: Vec<Form>,
     },
     Define {
         id: BindingId,
@@ -155,8 +156,13 @@ pub enum Statement {
 }
 
 #[derive(Clone, Debug)]
-enum Expr {
-    Atom(BindingId), // note: is empty list '()' an atom?
+pub enum Expr {
+    Atom(BindingId),
+    DoExpr(Vec<Form>),
+    // children are non-special atoms
+    BindingsList(Vec<Form>),
+    // bindings, args-in-do
+    FnExpr(Box<Form>, Box<Form>),
     Inv(Box<Form>, Vec<Form>),
 }
 
@@ -180,7 +186,7 @@ impl Env {
     fn new<T: Into<String>>(ns: T) -> Self {
         use self::CharSyntaxType::*;
 
-        let invalid_source_pos = SourcePos { idx: 0, len: 0 };
+        let invalid_source_pos = Span::new(0, 0);
         let root_scope_id = ScopeId::from(0);
 
         let ns = Namespace {
@@ -226,6 +232,7 @@ impl Env {
 
         env.insert("let", AtomKind::Special, root_scope_id, invalid_source_pos);
         env.insert("if", AtomKind::Special, root_scope_id, invalid_source_pos);
+        env.insert("do", AtomKind::Special, root_scope_id, invalid_source_pos);
 
         // empty list
         env.insert("()", AtomKind::Var, root_scope_id, invalid_source_pos);
@@ -233,20 +240,19 @@ impl Env {
         env
     }
 
-    pub fn is_special<T>(&self, symbol: T) -> bool
-        where T: AsRef<str>
+    pub fn add_record<T>(&mut self, symbol: T, kind: AtomKind, span: Span) -> BindingId
+        where T: Into<String>
     {
-        ["let", "if", "fn", "def", "ns", "use", "macro", "defreader"].contains(&symbol.as_ref())
+        let scope = self.current_scope();
+        self.insert(symbol, kind, scope, span)
     }
 
+    fn current_scope(&self) -> ScopeId {
+        // TODO
+        ScopeId::from(0)
+    }
 
-
-    pub fn insert<T>(&mut self,
-                     symbol: T,
-                     kind: AtomKind,
-                     scope: ScopeId,
-                     pos: SourcePos)
-                     -> BindingId
+    fn insert<T>(&mut self, symbol: T, kind: AtomKind, scope: ScopeId, pos: Span) -> BindingId
         where T: Into<String>
     {
         let id = BindingId::from(self.id_table.len() as u32);
@@ -272,6 +278,13 @@ impl Env {
             None => panic!("`{:?}` not present in {:#?}", id, self),
         }
     }
+
+    pub fn lookup_by_symbol<T>(&self, symbol: T) -> Option<Rc<BindingRecord>>
+        where T: AsRef<str>
+    {
+        let symbol = symbol.as_ref();
+        self.id_table.iter().find(|record| record.symbol == symbol).cloned()
+    }
 }
 
 #[derive(Debug)]
@@ -281,8 +294,8 @@ struct Namespace {
 }
 
 #[derive(Debug)]
-struct BindingRecord {
-    pos: SourcePos,
+pub struct BindingRecord {
+    pos: Span,
     symbol: String,
     scope: ScopeId,
     id: BindingId,
@@ -290,7 +303,11 @@ struct BindingRecord {
 }
 
 impl BindingRecord {
-    fn kind(&self) -> AtomKind {
+    pub fn id(&self) -> BindingId {
+        self.id
+    }
+
+    pub fn kind(&self) -> AtomKind {
         self.kind
     }
 }
@@ -315,29 +332,14 @@ enum BindingKind {
     Local, // not member of namespace (e.g. function args)
 }
 
-#[derive(Copy, Clone, Debug)]
-pub struct SourcePos {
-    idx: u32,
-    len: u32,
-}
-
-impl SourcePos {
-    pub fn new(idx: u32, len: u32) -> Self {
-        SourcePos {
-            idx: idx,
-            len: len,
-        }
-    }
-}
-
 pub struct InputStream {
     src: String,
     idx: usize,
 }
 
 impl InputStream {
-    pub fn pos(&self) -> u32 {
-        self.idx as u32
+    pub fn pos(&self) -> usize {
+        self.idx
     }
 
     fn new(src: String) -> Self {
@@ -416,42 +418,64 @@ macro_rules! def_id {
 def_id!(BindingId, u32);
 def_id!(ScopeId, u32);
 
-fn display(form: &Form, env: &Env) -> String {
-    use std::iter::once;
-
+fn display(env: &Env, form: &Form) -> String {
     match *form {
-        Form::Statement(ref s) => {
+        Form::Directive(ref s) => {
             match *s {
-                Statement::Namespace { ref name, ref forms } => {
-                    format!("(ns {}) {}",
-                            name,
-                            forms.iter().map(|form| display(form, env)).join(" "))
-                }
-                Statement::Define { id, ref to_value } => {
+                Directive::Namespace { ref name } => format!("(ns {})", name),
+                Directive::Define { id, ref to_value } => {
                     let name = &env.lookup_by_id(id).symbol;
                     let to_value = Form::Expr(to_value.clone());
-                    format!("(define {} {})", name, display(&to_value, env))
+                    format!("(define {} {})", name, display(env, &to_value))
                 }
             }
         }
         Form::Expr(ref e) => {
             match *e {
                 Expr::Atom(id) => format!("{}", &env.lookup_by_id(id).symbol),
-                Expr::Inv(ref callee, ref args) => {
-                    let forms = once(&**callee)
-                                    .chain(args.iter())
-                                    .map(|f| display(f, env))
-                                    .join(" ");
-                    format!("({})", forms)
+                Expr::DoExpr(ref args) => display_inv(env, "do", &**args),
+                Expr::BindingsList(ref children) => {
+                    match children.len() {
+                        0 => "()".into(),
+                        _ => {
+                            let first = display(env, &children[0]);
+                            display_inv(env, first, &children[1..])
+                        }
+                    }
                 }
+                Expr::FnExpr(ref bindings, ref wrapped_args) => {
+                    match **wrapped_args {
+                        Form::Expr(Expr::DoExpr(ref args)) => {
+                            format!("(fn {} {})",
+                                    display(env, bindings),
+                                    args.iter().map(|f| display(env, f)).join(" "))
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                Expr::Inv(ref callee, ref args) => display_inv(env, display(env, callee), &**args),
             }
         }
     }
 }
 
+fn display_inv<T>(env: &Env, callee: T, args: &[Form]) -> String
+    where T: Into<String>
+{
+    use std::iter::once;
+
+    let forms = once(callee.into())
+                    .chain(args.iter()
+                               .map(|f| display(env, f)))
+                    .join(" ");
+    format!("({})", forms)
+}
+
 impl Debug for Env {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        writeln!(f, "Env:")
+        try!(writeln!(f, "Env:"));
+
+        writeln!(f, "{:#?}", self.id_table)
     }
 }
 
@@ -459,41 +483,72 @@ impl Debug for Env {
 
 #[cfg(test)]
 mod test {
-    use lang;
+    use itertools::*;
 
+    use lang;
+    use census;
+
+    #[ignore]
     #[test]
     fn read_basic() {
         let inputs = vec!["", "()", "hello", "(1 2 3)", "(hello (world))"];
 
         for input in inputs {
-            let (form, env) = lang::read_in_default_ns_and_env(input);
+            let (forms, env) = lang::read_in_default_ns_and_env(input);
 
 
             println!("{:#?}", env);
-            println!("{:#?}", form);
-            assert_eq!(format!("(ns default) {}", input),
-                       lang::display(&form, &env));
+            println!("{:#?}", forms);
+            assert_eq!(input,
+                       forms.iter().map(|form| lang::display(&env, form)).join(" "));
         }
     }
 
+    #[ignore]
     #[test]
     fn main() {
-        let input = "";
+        let input = "()";
 
-        let (mut form, mut env) = lang::read_in_default_ns_and_env(input);
+        let (mut forms, mut env) = lang::read_in_default_ns_and_env(input);
         let mut repititions = 0;
 
-        while !lang::fully_parsed(&env, &form) {
+        println!("{:?}", env);
+
+        loop {
             if repititions == 64 {
                 panic!("limit reached!");
             }
 
-            form = lang::census(&mut env, form).unwrap();
-            form = lang::macroexpand(&env, form).unwrap();
+            println!("Before: {:?}", forms);
+            forms = census::census(&mut env, forms).unwrap();
+            println!("After: {:?}", forms);
+            forms = lang::macroexpand(&env, forms).unwrap();
+
             repititions += 1;
+
+            if forms.iter().all(|form| lang::fully_parsed(&env, form)) {
+                break;
+            }
         }
 
-        println!("{}", lang::display(&form, &env));
+        println!("Forms:");
+        println!("{}",
+                 forms.iter().map(|form| lang::display(&env, &form)).join(" "));
         panic!();
+    }
+
+    #[test]
+    fn read() {
+        let inputs = vec!["(let (x 10) world)"];
+
+        for input in inputs {
+            let (forms, env) = lang::read_in_default_ns_and_env(input);
+
+
+            println!("{:#?}", env);
+            println!("{:#?}", forms);
+            assert_eq!(input,
+                       forms.iter().map(|form| lang::display(&env, form)).join(" "));
+        }
     }
 }
