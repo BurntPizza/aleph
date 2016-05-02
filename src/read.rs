@@ -207,8 +207,32 @@ fn parse_do(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Erro
     Ok(Form::Expr(Expr::DoExpr(try!(sexps_to_forms(env, args)))))
 }
 
-fn parse_def(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
-    unimplemented!()
+fn parse_def(env: &mut Env, mut args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    let (name, doc_string, value) = match args.len() {
+        2 => {
+            (try!(sexp_to_form(env, args.remove(0))),
+             None::<String>,
+             try!(sexp_to_form(env, args.remove(0))))
+        }
+        // TODO (waiting on string literals)
+        // 3 => (args.remove(0), args.remove(0), args.remove(0))
+        _ => return Err("def must have 2 args".into()),
+    };
+
+    match name {
+        Form::Expr(Expr::Atom(id)) => {
+            match value {
+                Form::Expr(e) => {
+                    Ok(Form::Directive(Directive::Define {
+                        id: id,
+                        to_value: e,
+                    }))
+                }
+                _ => return Err("rhs of def must be an expression".into()),
+            }
+        }
+        _ => return Err("lhs of def must be a symbol".into()),
+    }
 }
 
 fn parse_ns(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {

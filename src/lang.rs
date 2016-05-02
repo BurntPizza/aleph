@@ -429,7 +429,7 @@ fn display(env: &Env, form: &Form) -> String {
                 Directive::Define { id, ref to_value } => {
                     let name = &env.lookup_by_id(id).symbol;
                     let to_value = Form::Expr(to_value.clone());
-                    format!("(define {} {})", name, display(env, &to_value))
+                    format!("(def {} {})", name, display(env, &to_value))
                 }
             }
         }
@@ -532,7 +532,7 @@ mod test {
 
     #[test]
     fn read() {
-        let inputs = vec!["(if (eq 1 2) hello world)"];
+        let inputs = vec!["(def x 10)"];
 
         for input in inputs {
             let (forms, env) = lang::read_in_default_ns_and_env(input);
