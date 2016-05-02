@@ -1,7 +1,7 @@
 use itertools::*;
 
 use std::error::Error;
-use std::fmt::{self, Display, Formatter};
+use std::fmt::{self, Display, Debug, Formatter};
 
 use lang::{self, Env, InputStream, Form, AtomKind, ScopeId, Directive, Expr};
 use lang::CharSyntaxType::*;
@@ -57,8 +57,8 @@ fn sexp_to_form(env: &mut Env, sexp: Sexp) -> Result<Form, Box<Error>> {
                             } else {
                                 // kind might be/need overwritten?
                                 let id = env.add_record(token, AtomKind::Var, span);
-                                let callee = Form::Expr(Expr::Atom(id));
-                                let args = try!(sexps_to_forms(env, sexps));
+                                let callee = Expr::Atom(id);
+                                let args = forms_to_exprs(try!(sexps_to_forms(env, sexps)));
 
                                 Ok(Form::Expr(Expr::Inv(Box::new(callee), args)))
                             }
@@ -204,7 +204,7 @@ fn parse_do(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Erro
 
     // TODO: more asserts?
 
-    Ok(Form::Expr(Expr::DoExpr(try!(sexps_to_forms(env, args)))))
+    Ok(Form::Expr(Expr::DoExpr(forms_to_exprs(try!(sexps_to_forms(env, args))))))
 }
 
 fn parse_def(env: &mut Env, mut args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
@@ -280,7 +280,7 @@ enum ReaderState {
 pub type ReaderMacroFunction = fn(&mut InputStream, &mut Env, u8)
                                   -> ::std::result::Result<Option<Sexp>, ReadError>;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Copy, Clone)]
 pub struct Span {
     idx: usize,
     len: usize,
@@ -292,6 +292,12 @@ impl Span {
             idx: idx,
             len: len,
         }
+    }
+}
+
+impl Debug for Span {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "({}, {})", self.idx, self.len)
     }
 }
 

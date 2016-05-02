@@ -17,6 +17,7 @@ extern crate enum_derive;
 mod lang;
 mod read;
 mod census;
+mod print_table;
 
 // pub mod reader;
 // pub mod analyzer;

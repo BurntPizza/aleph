@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 
 use read::{self, Span};
+use print_table;
 
 // (syntactic) Forms:
 // statement
@@ -62,35 +63,36 @@ fn macroexpand(env: &Env, form: Vec<Form>) -> Result<Vec<Form>> {
 }
 
 fn fully_parsed(env: &Env, form: &Form) -> bool {
-    match *form {
-        Form::Expr(ref e) => {
-            match *e {
-                Expr::Atom(id) => {
-                    match env.lookup_by_id(id).kind() {
-                        AtomKind::Macro => false,
-                        AtomKind::Var => true,
-                        AtomKind::Special => true,
-                    }
-                }
-                Expr::DoExpr(..) |
-                Expr::IfExpr(..) |
-                Expr::LetExpr(..) |
-                Expr::FnExpr(..) => true,
-                Expr::Inv(ref callee, ref args) => {
-                    if !fully_parsed(env, &**callee) {
-                        return false;
-                    }
 
-                    for form in args {
-                        if !fully_parsed(env, form) {
-                            return false;
-                        }
-                    }
+    fn helper(env: &Env, expr: &Expr) -> bool {
+        use std::iter::once;
 
-                    true
+        match *expr {
+            Expr::Atom(id) => {
+                match env.lookup_by_id(id).kind() {
+                    AtomKind::Macro => false,
+                    AtomKind::Var => true,
+                    AtomKind::Special => true,
                 }
             }
+            Expr::DoExpr(ref args) => args.iter().all(|e| helper(env, e)),
+            Expr::IfExpr(ref cond, ref t_e, ref e_e) => {
+                helper(env, cond) && helper(env, t_e) && helper(env, e_e)
+            }
+            Expr::LetExpr(ref params, ref values, ref body) => {
+                params.iter().chain(values.iter()).chain(body.iter()).all(|e| helper(env, e))
+            }
+            Expr::FnExpr(ref params, ref body) => {
+                params.iter().chain(body.iter()).all(|e| helper(env, e))
+            }
+            Expr::Inv(ref callee, ref args) => {
+                once(&**callee).chain(args.iter()).all(|e| helper(env, e))
+            }
         }
+    }
+
+    match *form {
+        Form::Expr(ref e) => helper(env, e),
         Form::Directive(_) => false,
     }
 }
@@ -115,7 +117,14 @@ impl Form {
             Some(form) => {
                 match form {
                     Form::Expr(expr) => {
-                        Form::Expr(Expr::Inv(Box::new(Form::Expr(expr)), items.collect()))
+                        Form::Expr(Expr::Inv(Box::new(expr),
+                                             items.map(|f| {
+                                                      match f {
+                                                          Form::Expr(e) => e,
+                                                          _ => unreachable!(),
+                                                      }
+                                                  })
+                                                  .collect()))
                     }
                     Form::Directive(sta) => {
                         //
@@ -159,14 +168,14 @@ pub enum Directive {
 #[derive(Clone, Debug)]
 pub enum Expr {
     Atom(BindingId),
-    DoExpr(Vec<Form>),
+    DoExpr(Vec<Expr>),
     // params, body
     FnExpr(Vec<Expr>, Vec<Expr>),
     // params, values, body
     LetExpr(Vec<Expr>, Vec<Expr>, Vec<Expr>),
     // condition, then-expr, else-expr
     IfExpr(Box<Expr>, Box<Expr>, Box<Expr>),
-    Inv(Box<Form>, Vec<Form>),
+    Inv(Box<Expr>, Vec<Expr>),
 }
 
 
@@ -236,9 +245,6 @@ impl Env {
         env.insert("let", AtomKind::Special, root_scope_id, invalid_source_pos);
         env.insert("if", AtomKind::Special, root_scope_id, invalid_source_pos);
         env.insert("do", AtomKind::Special, root_scope_id, invalid_source_pos);
-
-        // empty list
-        env.insert("()", AtomKind::Var, root_scope_id, invalid_source_pos);
 
         env
     }
@@ -464,27 +470,42 @@ fn display_expr(env: &Env, expr: &Expr) -> String {
             let body_exprs = body_exprs.iter().map(|e| display_expr(env, e)).join(" ");
             format!("(let ({}) {})", params_bindings, body_exprs)
         }
-        Expr::Inv(ref callee, ref args) => display_inv(env, display(env, callee), &**args),
+        Expr::Inv(ref callee, ref args) => display_inv(env, display_expr(env, callee), &**args),
     }
 }
 
-fn display_inv<T>(env: &Env, callee: T, args: &[Form]) -> String
+fn display_inv<T>(env: &Env, callee: T, args: &[Expr]) -> String
     where T: Into<String>
 {
     use std::iter::once;
 
-    let forms = once(callee.into())
+    let exprs = once(callee.into())
                     .chain(args.iter()
-                               .map(|f| display(env, f)))
+                               .map(|e| display_expr(env, e)))
                     .join(" ");
-    format!("({})", forms)
+    format!("({})", exprs)
 }
 
 impl Debug for Env {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        try!(writeln!(f, "Env:"));
+        use print_table::Alignment::Right;
 
-        writeln!(f, "{:#?}", self.id_table)
+        let rows = self.id_table
+                       .iter()
+                       .map(|br| {
+                           vec![br.id().to_string(),
+                                br.symbol.clone(),
+                                format!("{:?}", br.kind()),
+                                br.scope.to_string(),
+                                format!("{:?}", br.pos)]
+                       });
+
+        writeln!(f,
+                 "{:#?}",
+                 print_table::debug_table("Env",
+                                          vec!["id", "symbol", "kind", "scope", "pos"],
+                                          vec![Right, Right, Right, Right, Right],
+                                          rows))
     }
 }
 
@@ -497,18 +518,17 @@ mod test {
     use lang;
     use census;
 
-    #[ignore]
     #[test]
     fn main() {
         let input = "()";
 
         let (mut forms, mut env) = lang::read_in_default_ns_and_env(input);
-        let mut repititions = 0;
+        let mut passes = 0;
 
         println!("{:?}", env);
 
         loop {
-            if repititions == 64 {
+            if passes == 64 {
                 panic!("limit reached!");
             }
 
@@ -517,7 +537,7 @@ mod test {
             println!("After: {:?}", forms);
             forms = lang::macroexpand(&env, forms).unwrap();
 
-            repititions += 1;
+            passes += 1;
 
             if forms.iter().all(|form| lang::fully_parsed(&env, form)) {
                 break;
