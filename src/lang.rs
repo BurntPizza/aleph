@@ -73,7 +73,8 @@ fn fully_parsed(env: &Env, form: &Form) -> bool {
                     }
                 }
                 Expr::DoExpr(..) |
-                Expr::BindingsList(..) |
+                Expr::IfExpr(..) |
+                Expr::LetExpr(..) |
                 Expr::FnExpr(..) => true,
                 Expr::Inv(ref callee, ref args) => {
                     if !fully_parsed(env, &**callee) {
@@ -159,10 +160,12 @@ pub enum Directive {
 pub enum Expr {
     Atom(BindingId),
     DoExpr(Vec<Form>),
-    // children are non-special atoms
-    BindingsList(Vec<Form>),
-    // bindings, args-in-do
-    FnExpr(Box<Form>, Box<Form>),
+    // params, body
+    FnExpr(Vec<Expr>, Vec<Expr>),
+    // params, values, body
+    LetExpr(Vec<Expr>, Vec<Expr>, Vec<Expr>),
+    // condition, then-expr, else-expr
+    IfExpr(Box<Expr>, Box<Expr>, Box<Expr>),
     Inv(Box<Form>, Vec<Form>),
 }
 
@@ -430,32 +433,38 @@ fn display(env: &Env, form: &Form) -> String {
                 }
             }
         }
-        Form::Expr(ref e) => {
-            match *e {
-                Expr::Atom(id) => format!("{}", &env.lookup_by_id(id).symbol),
-                Expr::DoExpr(ref args) => display_inv(env, "do", &**args),
-                Expr::BindingsList(ref children) => {
-                    match children.len() {
-                        0 => "()".into(),
-                        _ => {
-                            let first = display(env, &children[0]);
-                            display_inv(env, first, &children[1..])
-                        }
-                    }
-                }
-                Expr::FnExpr(ref bindings, ref wrapped_args) => {
-                    match **wrapped_args {
-                        Form::Expr(Expr::DoExpr(ref args)) => {
-                            format!("(fn {} {})",
-                                    display(env, bindings),
-                                    args.iter().map(|f| display(env, f)).join(" "))
-                        }
-                        _ => unreachable!(),
-                    }
-                }
-                Expr::Inv(ref callee, ref args) => display_inv(env, display(env, callee), &**args),
-            }
+        Form::Expr(ref e) => display_expr(env, e),
+    }
+}
+
+fn display_expr(env: &Env, expr: &Expr) -> String {
+    match *expr {
+        Expr::Atom(id) => format!("{}", &env.lookup_by_id(id).symbol),
+        Expr::DoExpr(ref args) => display_inv(env, "do", &**args),
+        Expr::FnExpr(ref params, ref body_exprs) => {
+            format!("(fn ({}) {})",
+                    params.iter().map(|e| display_expr(env, e)).join(" "),
+                    body_exprs.iter().map(|e| display_expr(env, e)).join(" "))
         }
+        Expr::IfExpr(ref condition, ref then_expr, ref else_expr) => {
+            format!("(if {} {} {})",
+                    display_expr(env, condition),
+                    display_expr(env, then_expr),
+                    display_expr(env, else_expr))
+        }
+        Expr::LetExpr(ref params, ref bindings, ref body_exprs) => {
+            let params_bindings = params.iter()
+                                        .zip(bindings.iter())
+                                        .map(|(p, b)| {
+                                            format!("{} {}",
+                                                    display_expr(env, p),
+                                                    display_expr(env, b))
+                                        })
+                                        .join(" ");
+            let body_exprs = body_exprs.iter().map(|e| display_expr(env, e)).join(" ");
+            format!("(let ({}) {})", params_bindings, body_exprs)
+        }
+        Expr::Inv(ref callee, ref args) => display_inv(env, display(env, callee), &**args),
     }
 }
 
@@ -487,22 +496,6 @@ mod test {
 
     use lang;
     use census;
-
-    #[ignore]
-    #[test]
-    fn read_basic() {
-        let inputs = vec!["", "()", "hello", "(1 2 3)", "(hello (world))"];
-
-        for input in inputs {
-            let (forms, env) = lang::read_in_default_ns_and_env(input);
-
-
-            println!("{:#?}", env);
-            println!("{:#?}", forms);
-            assert_eq!(input,
-                       forms.iter().map(|form| lang::display(&env, form)).join(" "));
-        }
-    }
 
     #[ignore]
     #[test]
@@ -539,7 +532,7 @@ mod test {
 
     #[test]
     fn read() {
-        let inputs = vec!["(let (x 10) world)"];
+        let inputs = vec!["(if (eq 1 2) hello world)"];
 
         for input in inputs {
             let (forms, env) = lang::read_in_default_ns_and_env(input);

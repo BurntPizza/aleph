@@ -1,3 +1,4 @@
+use itertools::*;
 
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
@@ -88,37 +89,97 @@ fn parse_special_form(env: &mut Env,
     }
 }
 
-fn parse_bindings(env: &mut Env, sexp: Sexp) -> Result<Form, Box<Error>> {
-    match sexp {
-        Sexp::Atom(..) => Err("Bindings list must be a list".into()),
-        Sexp::List(_, children) => {
-            // assert that all children are suitable Atoms
-
-            for child in children.iter() {
-                try!(match *child {
-                    Sexp::Atom(_, ref token) => {
-                        if lang::is_special(token) {
-                            Err(Box::<Error>::from(format!("Binding cannot be keyword: {}", token)))
-                        } else {
-                            Ok(())
-                        }
-                    }
-                    Sexp::List(..) => Err(format!("Binding in list must be symbol").into()),
-                });
+fn assert_params_list_atoms(params: &[Sexp]) -> Result<(), Box<Error>> {
+    for param in params.iter() {
+        try!(match *param {
+            Sexp::Atom(_, ref token) => {
+                if lang::is_special(token) {
+                    Err(Box::<Error>::from(format!("Param cannot be a special form: {}", token)))
+                } else {
+                    Ok(())
+                }
             }
+            Sexp::List(..) => Err(format!("Param in list must be symbol").into()),
+        });
+    }
+    Ok(())
+}
 
-            Ok(Form::Expr(Expr::BindingsList(try!(sexps_to_forms(env, children)))))
+// TODO: unchecked
+fn form_to_expr(form: Form) -> Expr {
+    match form {
+        Form::Expr(e) => e,
+        _ => unreachable!(),
+    }
+}
+
+fn forms_to_exprs(forms: Vec<Form>) -> Vec<Expr> {
+    forms.into_iter()
+         .map(form_to_expr)
+         .collect()
+}
+
+fn parse_params_list(env: &mut Env, sexp: Sexp) -> Result<Vec<Expr>, Box<Error>> {
+    match sexp {
+        Sexp::Atom(..) => Err("Params list must be a list".into()),
+        Sexp::List(_, children) => {
+            try!(assert_params_list_atoms(&*children));
+
+            let exprs = forms_to_exprs(try!(sexps_to_forms(env, children)));
+
+            Ok(exprs)
         }
     }
 }
 
+fn parse_bindings(env: &mut Env, sexp: Sexp) -> Result<(Vec<Expr>, Vec<Expr>), Box<Error>> {
+    match sexp {
+        Sexp::Atom(..) => Err("Bindings list must be a list".into()),
+        Sexp::List(_, children) => {
+            let mut counter = 0;
+            let (params, values): (Vec<_>, Vec<_>) = children.into_iter()
+                                                             .partition(|_| {
+                                                                 counter += 1;
+                                                                 (counter - 1) % 2 == 0
+                                                             });
 
-fn parse_let(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
-    unimplemented!()
+            try!(assert_params_list_atoms(&*params));
+
+            let params = forms_to_exprs(try!(sexps_to_forms(env, params)));
+            let values = forms_to_exprs(try!(sexps_to_forms(env, values)));
+
+            Ok((params, values))
+        }
+    }
 }
 
-fn parse_if(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
-    unimplemented!()
+fn parse_let(env: &mut Env, mut args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    // assert args >= 2 (bindings list, body...)
+    if args.len() < 2 {
+        return Err("let needs at least 2 args".into());
+    }
+
+    let bindings_sexp = args.remove(0);
+    let body_sexps = args;
+
+    let (params, values) = try!(parse_bindings(env, bindings_sexp));
+    let body_exprs = forms_to_exprs(try!(sexps_to_forms(env, body_sexps)));
+
+    Ok(Form::Expr(Expr::LetExpr(params, values, body_exprs)))
+}
+
+fn parse_if(env: &mut Env, mut args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
+    if args.len() != 3 {
+        return Err("if needs 3 args".into());
+    }
+
+    let cond_expr = form_to_expr(try!(sexp_to_form(env, args.remove(0))));
+    let then_expr = form_to_expr(try!(sexp_to_form(env, args.remove(0))));
+    let else_expr = form_to_expr(try!(sexp_to_form(env, args.remove(0))));
+
+    Ok(Form::Expr(Expr::IfExpr(Box::new(cond_expr),
+                               Box::new(then_expr),
+                               Box::new(else_expr))))
 }
 
 fn parse_fn(env: &mut Env, mut args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
@@ -127,15 +188,13 @@ fn parse_fn(env: &mut Env, mut args: Vec<Sexp>, span: Span) -> Result<Form, Box<
         return Err("fn needs at least 2 args".into());
     }
 
-    args.push(Sexp::Atom(Span::new(0, 0), "do".to_owned()));
-
-    let bindings_sexp = args.swap_remove(0);
+    let params_sexp = args.remove(0);
     let body_sexps = args;
 
-    let bindings_form = try!(parse_bindings(env, bindings_sexp));
-    let body_form = try!(sexp_to_form(env, Sexp::List(span, body_sexps)));
+    let params = try!(parse_params_list(env, params_sexp));
+    let body_exprs = forms_to_exprs(try!(sexps_to_forms(env, body_sexps)));
 
-    Ok(Form::Expr(Expr::FnExpr(Box::new(bindings_form), Box::new(body_form))))
+    Ok(Form::Expr(Expr::FnExpr(params, body_exprs)))
 }
 
 fn parse_do(env: &mut Env, args: Vec<Sexp>, span: Span) -> Result<Form, Box<Error>> {
