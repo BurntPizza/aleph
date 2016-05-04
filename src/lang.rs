@@ -7,7 +7,7 @@ use std::convert::Into;
 use std::collections::HashMap;
 use std::fmt::{self, Debug, Formatter};
 
-use read::{self, Span};
+use read::{self, Span, CharSyntaxType, MacroCharType, InputStream};
 use print_table;
 
 // (syntactic) Forms:
@@ -25,7 +25,7 @@ use print_table;
 //
 // let
 // if
-// match? or is this a complicated macro?
+// match? or is this a complicated macro? (maybe easier to impl as a special?)
 
 // builtin macros/instrinsics:
 // do
@@ -97,6 +97,48 @@ fn fully_parsed(env: &Env, form: &Form) -> bool {
     }
 }
 
+const SPECIALS: [&'static str; 9] = ["let",
+                                     "if",
+                                     "fn",
+                                     "do",
+                                     "def",
+                                     "ns",
+                                     "use",
+                                     "macro",
+                                     "defreader"];
+
+const DIRECTIVES: [&'static str; 4] = ["def", "ns", "use", "defreader"];
+
+pub fn is_special<T>(symbol: T) -> bool
+    where T: AsRef<str>
+{
+    SPECIALS.contains(&symbol.as_ref())
+}
+
+fn is_directive<T>(symbol: T) -> bool
+    where T: AsRef<str>
+{
+    DIRECTIVES.contains(&symbol.as_ref())
+}
+
+
+// TODO: unchecked
+pub fn form_to_expr(form: Form) -> Expr {
+    match form {
+        Form::Expr(e) => e,
+        _ => unreachable!(),
+    }
+}
+
+pub fn forms_to_exprs<T>(forms: T) -> Vec<Expr>
+    where T: IntoIterator<Item = Form>
+{
+    forms.into_iter()
+         .map(form_to_expr)
+         .collect()
+}
+
+
 #[derive(Clone, Debug)]
 pub enum Form {
     Directive(Directive),
@@ -117,14 +159,8 @@ impl Form {
             Some(form) => {
                 match form {
                     Form::Expr(expr) => {
-                        Form::Expr(Expr::Inv(Box::new(expr),
-                                             items.map(|f| {
-                                                      match f {
-                                                          Form::Expr(e) => e,
-                                                          _ => unreachable!(),
-                                                      }
-                                                  })
-                                                  .collect()))
+                        let args = forms_to_exprs(items);
+                        Form::Expr(Expr::Inv(Box::new(expr), args))
                     }
                     Form::Directive(sta) => {
                         //
@@ -139,19 +175,6 @@ impl Form {
             }
         }
     }
-}
-
-pub fn is_special<T>(symbol: T) -> bool
-    where T: AsRef<str>
-{
-    ["let", "if", "fn", "do", "def", "ns", "use", "macro", "defreader"].contains(&symbol.as_ref())
-}
-
-
-fn is_statement<T>(symbol: T) -> bool
-    where T: AsRef<str>
-{
-    ["def", "ns", "use", "defreader"].contains(&symbol.as_ref())
 }
 
 #[derive(Clone, Debug)]
@@ -196,7 +219,7 @@ impl Env {
     }
 
     fn new<T: Into<String>>(ns: T) -> Self {
-        use self::CharSyntaxType::*;
+        use read::CharSyntaxType::*;
 
         let invalid_source_pos = Span::new(0, 0);
         let root_scope_id = ScopeId::from(0);
@@ -340,69 +363,6 @@ enum BindingKind {
     Module, // member of external namespace
     Local, // not member of namespace (e.g. function args)
 }
-
-pub struct InputStream {
-    src: String,
-    idx: usize,
-}
-
-impl InputStream {
-    pub fn pos(&self) -> usize {
-        self.idx
-    }
-
-    fn new(src: String) -> Self {
-        assert!(::std::ascii::AsciiExt::is_ascii(&*src));
-        InputStream { src: src, idx: 0 }
-    }
-
-    pub fn unread(&mut self) {
-        assert!(self.idx > 0);
-        self.idx -= 1;
-    }
-}
-
-impl Iterator for InputStream {
-    type Item = u8;
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.idx < self.src.len() {
-            let c = Some(self.src.as_bytes()[self.idx]);
-            self.idx += 1;
-            c
-        } else {
-            None
-        }
-    }
-}
-
-
-
-#[derive(PartialEq, Copy, Clone, Debug)]
-pub enum CharSyntaxType {
-    /// An invalid character
-    Invalid,
-    /// A whitespace character
-    Whitespace,
-    /// A reader macro character
-    MacroChar(MacroCharType),
-    /// A single-escape character
-    SingleEscape,
-    /// A multiple-escape character
-    MultEscape,
-    /// A character that constitutes a token
-    TokenChar,
-}
-
-/// The classes of reader macro characters
-#[derive(Debug, PartialEq, Copy, Clone)]
-pub enum MacroCharType {
-    /// A terminating macro character
-    Terminating,
-    /// A non-terminating macro character
-    Nonterminating,
-}
-
-
 
 macro_rules! def_id {
     ($name:ident, $ty:ty) => {

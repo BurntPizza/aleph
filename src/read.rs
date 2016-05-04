@@ -3,8 +3,9 @@ use itertools::*;
 use std::error::Error;
 use std::fmt::{self, Display, Debug, Formatter};
 
-use lang::{self, Env, InputStream, Form, AtomKind, ScopeId, Directive, Expr};
-use lang::CharSyntaxType::*;
+use lang::{self, Env, Form, AtomKind, ScopeId, Directive, Expr, form_to_expr, forms_to_exprs};
+
+use self::CharSyntaxType::*;
 
 pub fn read(env: &mut Env, stream: &mut InputStream) -> Result<Vec<Form>, Box<Error>> {
     let mut results = vec![];
@@ -103,20 +104,6 @@ fn assert_params_list_atoms(params: &[Sexp]) -> Result<(), Box<Error>> {
         });
     }
     Ok(())
-}
-
-// TODO: unchecked
-fn form_to_expr(form: Form) -> Expr {
-    match form {
-        Form::Expr(e) => e,
-        _ => unreachable!(),
-    }
-}
-
-fn forms_to_exprs(forms: Vec<Form>) -> Vec<Expr> {
-    forms.into_iter()
-         .map(form_to_expr)
-         .collect()
 }
 
 fn parse_params_list(env: &mut Env, sexp: Sexp) -> Result<Vec<Expr>, Box<Error>> {
@@ -309,7 +296,7 @@ pub enum Sexp {
 /// Ported from the [Common Lisp HyperSpec](http://clhs.lisp.se/Body/02_b.htm)
 fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<Sexp, ReadError> {
 
-    use lang::MacroCharType::*;
+    use self::MacroCharType::*;
     use self::ReaderState::*;
     use self::ReadErrorType::*;
 
@@ -439,6 +426,68 @@ fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<
             }
         }
     }
+}
+
+
+pub struct InputStream {
+    src: String,
+    idx: usize,
+}
+
+impl InputStream {
+    pub fn pos(&self) -> usize {
+        self.idx
+    }
+
+    pub fn new(src: String) -> Self {
+        assert!(::std::ascii::AsciiExt::is_ascii(&*src));
+        InputStream { src: src, idx: 0 }
+    }
+
+    pub fn unread(&mut self) {
+        assert!(self.idx > 0);
+        self.idx -= 1;
+    }
+}
+
+impl Iterator for InputStream {
+    type Item = u8;
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.idx < self.src.len() {
+            let c = Some(self.src.as_bytes()[self.idx]);
+            self.idx += 1;
+            c
+        } else {
+            None
+        }
+    }
+}
+
+
+
+#[derive(PartialEq, Copy, Clone, Debug)]
+pub enum CharSyntaxType {
+    /// An invalid character
+    Invalid,
+    /// A whitespace character
+    Whitespace,
+    /// A reader macro character
+    MacroChar(MacroCharType),
+    /// A single-escape character
+    SingleEscape,
+    /// A multiple-escape character
+    MultEscape,
+    /// A character that constitutes a token
+    TokenChar,
+}
+
+/// The classes of reader macro characters
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum MacroCharType {
+    /// A terminating macro character
+    Terminating,
+    /// A non-terminating macro character
+    Nonterminating,
 }
 
 
