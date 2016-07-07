@@ -4,8 +4,6 @@ use std::error::Error;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Debug, Formatter};
 
-use lang::{self, Form, ScopeId, Directive, Expr, form_to_expr, forms_to_exprs};
-
 use self::CharSyntaxType::*;
 
 pub struct Env {
@@ -336,7 +334,7 @@ impl Debug for Span {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Sexp {
     Atom(Span, String),
     List(Span, Vec<Sexp>),

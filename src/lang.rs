@@ -1,10 +1,9 @@
-
 use itertools::*;
 
 use std::rc::Rc;
 use std::error::Error;
 use std::convert::Into;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Debug, Formatter};
 
 use read::{self, Span, Sexp, InputStream};
@@ -81,18 +80,10 @@ fn macroexpand(env: &Env, forms: &mut [Sexp]) -> Result<()> {
     unimplemented!()
 }
 
-
-
-// fn fully_parsed(env: &Env, form: &Sexp) -> bool {
-//     match *form {
-//         Sexp::Atom(_, ref string) => {
-//             env.lookup_by_name(&**string).map(|b| b.binding().0 == AtomKind::Var).unwrap()
-//         }
-//         Sexp::List(_, ref children) => {
-//             children.is_empty() || children.iter().all(|s| fully_parsed(env, s))
-//         }
-//     }
-// }
+fn exec(env: &Env, asts: &[Ast]) -> Result<String> {
+    let program = try!(compile::compile(env, asts));
+    Ok(program.exec())
+}
 
 const SPECIALS: [&'static str; 9] = ["let",
                                      "if",
@@ -118,67 +109,8 @@ fn is_directive<T>(symbol: T) -> bool
     DIRECTIVES.contains(&symbol.as_ref())
 }
 
-
-// TODO: unchecked
-pub fn form_to_expr(form: Form) -> Expr {
-    match form {
-        Form::Expr(e) => e,
-        _ => unreachable!(),
-    }
-}
-
-pub fn forms_to_exprs<T>(forms: T) -> Vec<Expr>
-    where T: IntoIterator<Item = Form>
-{
-    forms.into_iter()
-         .map(form_to_expr)
-         .collect()
-}
-
-#[derive(Clone, Debug)]
-pub enum Form {
-    Directive(Directive),
-    Expr(Expr),
-}
-
-impl Form {
-    pub fn atom(id: BindingId) -> Self {
-        Form::Expr(Expr::Atom(id))
-    }
-
-    pub fn list<T>(env: &mut Env, pos: Span, items: T) -> Self
-        where T: IntoIterator<Item = Form>
-    {
-        let mut items = items.into_iter();
-
-        match items.next() {
-            Some(form) => {
-                match form {
-                    Form::Expr(expr) => {
-                        let args = forms_to_exprs(items);
-                        Form::Expr(Expr::Inv(Box::new(expr), args))
-                    }
-                    Form::Directive(sta) => {
-                        //
-                        unimplemented!()
-                    }
-                }
-            }
-            None => {
-                // empty list (TODO: is root scope ok?)
-                let id = env.insert("()",
-                                    // AtomKind::Var,
-                                    Binding::Const(ConstType::Unit),
-                                    ScopeId::from(0),
-                                    pos);
-                Form::Expr(Expr::Atom(id))
-            }
-        }
-    }
-}
-
 // TODO: better name
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum BindingKey {
     String(String),
     Id(BindingId),
@@ -207,17 +139,6 @@ impl Ast {
         // TODO
         unimplemented!()
     }
-}
-
-#[derive(Clone, Debug)]
-pub enum Directive {
-    Namespace {
-        name: String,
-    },
-    Define {
-        id: BindingId,
-        to_value: Expr,
-    },
 }
 
 #[derive(Clone, Debug)]
@@ -250,40 +171,71 @@ impl FnDef {
 
 pub struct Env {
     fn_defs: Vec<FnDef>,
-    root_ns: Namespace,
     id_table: Vec<Rc<BindingRecord>>,
+    // yet-to-be parsed
+    work_list: VecDeque<(Span, String, Rc<Sexp>)>,
 }
 
 impl Env {
-    pub fn test_name_collision(&self, name: &str) -> Result<()> {
+    pub fn add_record(&mut self, span: Span, name: String, rhs: Sexp) {
+        self.work_list.push_back((span, name, Rc::new(rhs)));
+    }
+
+    pub fn lookup_by_id(&self, id: BindingId) -> Rc<BindingRecord> {
+        match self.id_table.get(*id as usize).cloned() {
+            Some(record) => record,
+            None => panic!("`{:?}` not present in {:#?}", id, self),
+        }
+    }
+
+    pub fn lookup_by_name<T>(&self, symbol: T) -> Option<Rc<BindingRecord>>
+        where T: AsRef<str>
+    {
+        let symbol = symbol.as_ref();
+        self.id_table.iter().find(|record| record.symbol == symbol).cloned()
+    }
+
+    pub fn fn_defs(&self) -> &[FnDef] {
+        &*self.fn_defs
+    }
+
+    pub fn finish_work_list(&mut self) -> Result<()> {
+        while !self.work_list.is_empty() {
+            let (span, name, def) = self.work_list.pop_front().unwrap();
+
+            try!(self.test_name_collision(&name));
+
+            match create_binding(self, def) {
+                BindResult::Ok(binding) => {
+                    let scope = self.current_scope();
+                    self.insert(name, binding, scope, span);
+                }
+                BindResult::Unfinished(def) => {
+                    self.work_list.push_back((span, name, def));
+                }
+                BindResult::Err(e) => return Err(e),
+            }
+        }
+
+        Ok(())
+    }
+
+    fn test_name_collision(&self, name: &str) -> Result<()> {
         match self.lookup_by_name(&*name) {
             Some(_record) => Err(format!("Name collision: {}", name).into()),
             None => Ok(()),
         }
     }
 
-    // pub fn try_install_binding(&mut self, name: String, span: Span, rhs: Sexp) -> Result<()> {
-    //     // test for name collision
-    //
-    // }
-
-    pub fn fn_defs(&self) -> &[FnDef] {
-        &*self.fn_defs
-    }
-
     fn new<T: Into<String>>(ns: T) -> Self {
         let invalid_source_pos = Span::new(0, 0);
         let root_scope_id = ScopeId::from(0);
 
-        let ns = Namespace {
-            name: ns.into(),
-            scope: root_scope_id,
-        };
-
         let mut env = Env {
             fn_defs: vec![],
-            root_ns: ns,
+            // root_ns: ns,
             id_table: vec![],
+            work_list: VecDeque::new(),
         };
 
 
@@ -309,36 +261,6 @@ impl Env {
         env
     }
 
-    pub fn add_record<T>(&mut self,
-                         symbol: T,
-                         // atom_kind: AtomKind,
-                         binding: Binding,
-                         span: Span)
-                         -> BindingId
-        where T: Into<String>
-    {
-        let scope = self.current_scope();
-        self.insert(symbol,
-                    // atom_kind,
-                    binding,
-                    scope,
-                    span)
-    }
-
-    pub fn lookup_by_id(&self, id: BindingId) -> Rc<BindingRecord> {
-        match self.id_table.get(*id as usize).cloned() {
-            Some(record) => record,
-            None => panic!("`{:?}` not present in {:#?}", id, self),
-        }
-    }
-
-    pub fn lookup_by_name<T>(&self, symbol: T) -> Option<Rc<BindingRecord>>
-        where T: AsRef<str>
-    {
-        let symbol = symbol.as_ref();
-        self.id_table.iter().find(|record| record.symbol == symbol).cloned()
-    }
-
     fn current_scope(&self) -> ScopeId {
         // TODO
         ScopeId::from(0)
@@ -350,26 +272,37 @@ impl Env {
                  binding: Binding,
                  scope: ScopeId,
                  pos: Span)
-                 -> BindingId
         where T: Into<String>
     {
+        let symbol = symbol.into();
         let id = BindingId::from(self.id_table.len() as u32);
         let record = BindingRecord {
             id: id,
             pos: pos,
-            symbol: symbol.into(),
+            symbol: symbol,
             scope: scope,
             binding: binding,
         };
         self.id_table.push(Rc::new(record));
-        id
     }
 }
 
-#[derive(Debug)]
-struct Namespace {
-    name: String,
-    scope: ScopeId,
+enum ParseResult {
+    Ok(Ast),
+    Unfishished(Rc<Sexp>),
+    Err(Box<Error>),
+}
+
+fn parse_sexp(env: &Env, sexp: Rc<Sexp>) -> ParseResult {
+    match *sexp {
+        Sexp::Atom(span, ref string) => {
+            match string.parse::<i64>() {
+                Ok(val) => ParseResult::Ok(Ast::I64Literal(span, val)),
+                _ => ParseResult::Ok(Ast::Atom(span, BindingKey::String(string.clone()))),
+            }
+        }
+        Sexp::List(_, ref sexps) => unimplemented!(),
+    }
 }
 
 #[derive(Debug)]
@@ -386,8 +319,8 @@ impl BindingRecord {
         self.id
     }
 
-    pub fn binding(&self) -> Binding {
-        self.binding
+    pub fn binding(&self) -> &Binding {
+        &self.binding
     }
 }
 
@@ -403,10 +336,43 @@ impl BindingRecord {
 //     Macro,
 // }
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+enum BindResult {
+    Ok(Binding),
+    Unfinished(Rc<Sexp>),
+    Err(Box<Error>),
+}
+
+fn create_binding(env: &Env, sexp: Rc<Sexp>) -> BindResult {
+    match parse_sexp(env, sexp.clone()) {
+        ParseResult::Ok(ast) => {
+            match ast {
+                Ast::I64Literal(_, val) => BindResult::Ok(Binding::Const(ConstType::I64(val))),
+                // alias
+                Ast::Atom(_, binding_key) => {
+                    let record = match binding_key {
+                        BindingKey::Id(id) => env.lookup_by_id(id),
+                        BindingKey::String(string) => {
+                            match env.lookup_by_name(&string) {
+                                Some(record) => record,
+                                _ => return BindResult::Unfinished(sexp),
+                            }
+                        }
+                    };
+
+                    BindResult::Ok(record.binding().clone())
+                }
+                _ => unimplemented!(),
+            }
+        }
+        ParseResult::Unfishished(sexp) => BindResult::Unfinished(sexp),
+        ParseResult::Err(e) => BindResult::Err(e),
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum ConstType {
     Unit,
-    I64(i64),
+    I64(i64), // Binding(BindingKey),
 }
 
 // (def x 10) installs 'x' into current namespace (TopLevel)
@@ -414,7 +380,7 @@ pub enum ConstType {
 // (use hello/y) '' 'y' ''
 // (use hello) installs (lazily) 'hello/x' and 'hello/y' into current namespace (Module)
 // (let [x 10] x) 'x' is Local in it's scope (no associated namespace)
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum Binding {
     Const(ConstType),
     ExternalConst,
@@ -445,22 +411,6 @@ macro_rules! def_id {
 
 def_id!(BindingId, u32);
 def_id!(ScopeId, u32);
-
-fn display(env: &Env, form: &Form) -> String {
-    match *form {
-        Form::Directive(ref s) => {
-            match *s {
-                Directive::Namespace { ref name } => format!("(ns {})", name),
-                Directive::Define { id, ref to_value } => {
-                    let name = &env.lookup_by_id(id).symbol;
-                    let to_value = Form::Expr(to_value.clone());
-                    format!("(def {} {})", name, display(env, &to_value))
-                }
-            }
-        }
-        Form::Expr(ref e) => display_expr(env, e),
-    }
-}
 
 fn display_expr(env: &Env, expr: &Expr) -> String {
     match *expr {
@@ -538,18 +488,33 @@ mod test {
     use census;
     use compile;
 
-    #[test]
-    fn read() {
-        let inputs = vec!["10", "(def x 10) x"];
+    macro_rules! test1 {
+        ($name:ident, $input:expr, $expected:expr) => {
+            #[test]
+            fn $name() {
+                
+                let input: &'static str = $input;
+                let expected: &'static str = $expected;
+                
+                let sexps = lang::read_in_default_ns_and_env(input);
+                let mut env = lang::Env::new("testing");
+                let asts = census::census(&mut env, sexps).unwrap();
+                println!("{:?}", input);
+                println!("{:#?}", env);
+                println!("{:#?}", asts);
 
-        for input in inputs {
-            let sexps = lang::read_in_default_ns_and_env(input);
-            let mut env = lang::Env::new("testing");
-            let ast = census::census(&mut env, sexps).unwrap();
-            println!("{:#?}", env);
-            println!("{:#?}", ast);
-            let program = compile::compile(&env, &ast).unwrap();
-            assert_eq!(program.exec(), "10");
+                assert_eq!(lang::exec(&env, &*asts).unwrap(), expected);
+                // typecheck(&env, &ast).unwrap();
+                //let program = compile::compile(&env, &ast).unwrap();
+                //assert_eq!(program.exec(), expected);
+            }
         }
     }
+
+    test1!(eval_i64, "10", "10");
+    test1!(def_i64, "(def x 10) x", "10");
+    test1!(forward_def_i64, "x (def x 10)", "10");
+    test1!(alias_i64, "(def x 10) (def y x) y", "10");
+    test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
+
 }

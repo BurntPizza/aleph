@@ -95,11 +95,13 @@ fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
         }
         Ast::Atom(span, ref binding_key) => {
             let record = match *binding_key {
-                BindingKey::String(ref k) => env.lookup_by_name(k).unwrap(),
+                BindingKey::String(ref k) => {
+                    env.lookup_by_name(k).expect("no binding found by that name")
+                }
                 BindingKey::Id(k) => env.lookup_by_id(k),
             };
 
-            match record.binding() {
+            match *record.binding() {
                 // 'x' after '(def x 10)'
                 Binding::Const(ConstType::I64(val)) => {
                     code.push(MIns::I64(val));
@@ -111,7 +113,23 @@ fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
         Ast::Do(..) => unimplemented!(),
         Ast::Fn(..) => unimplemented!(),
         Ast::If(..) => unimplemented!(),
-        Ast::Inv(..) => unimplemented!(),
+        Ast::Inv(span, ref callee, ref args) => {
+            // lookup callee
+            // lookup and unify args with callee sig
+
+            let fn_def_id = unimplemented!();
+
+            // codegen:
+            // gen each arg
+            // emit fn_ptr/call
+
+            // note the order
+            for arg in args.iter() {
+                codegen(env, arg, code);
+            }
+
+            code.push(MIns::CallFn(fn_def_id));
+        }
         Ast::Let(..) => unimplemented!(),
     }
 }

@@ -16,7 +16,7 @@ doc = false
 custom_derive = "0.1"
 enum_derive = "0.1"
 byteorder = "0.5"
-itertools = "0.4"
+itertools = "0.4.16"
 clap = "^2"
 ansi_term = "0.7"
 hamt = { version = "0.1", git = "https://github.com/michaelwoerister/rs-persistent-datastructures" }
