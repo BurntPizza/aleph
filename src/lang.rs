@@ -3,7 +3,7 @@ use itertools::*;
 use std::rc::Rc;
 use std::error::Error;
 use std::convert::Into;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{self, Debug, Formatter};
 
 use read::{self, Span, Sexp, InputStream};
@@ -121,6 +121,7 @@ pub enum Ast {
     EmptyList(Span),
 
     I64Literal(Span, i64),
+    BoolLiteral(Span, bool),
 
     Atom(Span, BindingKey),
     Inv(Span, Box<Ast>, Vec<Ast>),
@@ -132,13 +133,6 @@ pub enum Ast {
     Let(Span, Vec<Expr>, Vec<Expr>, Vec<Expr>),
     // condition, then-expr, else-expr
     If(Span, Box<Expr>, Box<Expr>, Box<Expr>),
-}
-
-impl Ast {
-    fn is_directive(&self) -> bool {
-        // TODO
-        unimplemented!()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -172,12 +166,14 @@ impl FnDef {
 pub struct Env {
     fn_defs: Vec<FnDef>,
     id_table: Vec<Rc<BindingRecord>>,
+    forward_decls: HashSet<String>,
     // yet-to-be parsed
     work_list: VecDeque<(Span, String, Rc<Sexp>)>,
 }
 
 impl Env {
     pub fn add_record(&mut self, span: Span, name: String, rhs: Sexp) {
+        self.forward_decls.insert(name.clone());
         self.work_list.push_back((span, name, Rc::new(rhs)));
     }
 
@@ -193,6 +189,12 @@ impl Env {
     {
         let symbol = symbol.as_ref();
         self.id_table.iter().find(|record| record.symbol == symbol).cloned()
+    }
+
+    pub fn contains_name<T>(&self, symbol: T) -> bool
+        where T: AsRef<str>
+    {
+        self.forward_decls.contains(symbol.as_ref())
     }
 
     pub fn fn_defs(&self) -> &[FnDef] {
@@ -221,9 +223,9 @@ impl Env {
     }
 
     fn test_name_collision(&self, name: &str) -> Result<()> {
-        match self.lookup_by_name(&*name) {
-            Some(_record) => Err(format!("Name collision: {}", name).into()),
-            None => Ok(()),
+        match self.lookup_by_name(name) {
+            Some(_) => Err(format!("Name collision: {}", name).into()),
+            _ => Ok(()),
         }
     }
 
@@ -235,6 +237,7 @@ impl Env {
             fn_defs: vec![],
             // root_ns: ns,
             id_table: vec![],
+            forward_decls: HashSet::new(),
             work_list: VecDeque::new(),
         };
 
@@ -275,6 +278,7 @@ impl Env {
         where T: Into<String>
     {
         let symbol = symbol.into();
+        self.forward_decls.insert(symbol.clone());
         let id = BindingId::from(self.id_table.len() as u32);
         let record = BindingRecord {
             id: id,
@@ -324,18 +328,6 @@ impl BindingRecord {
     }
 }
 
-// #[derive(Copy, Clone, Debug, PartialEq)]
-// pub enum AtomKind {
-//     Var,
-//     Macro,
-// }
-
-// #[derive(Copy, Clone, Debug, PartialEq)]
-// pub enum ConstKind {
-//     Var(ConstType),
-//     Macro,
-// }
-
 enum BindResult {
     Ok(Binding),
     Unfinished(Rc<Sexp>),
@@ -354,7 +346,14 @@ fn create_binding(env: &Env, sexp: Rc<Sexp>) -> BindResult {
                         BindingKey::String(string) => {
                             match env.lookup_by_name(&string) {
                                 Some(record) => record,
-                                _ => return BindResult::Unfinished(sexp),
+                                _ => {
+                                    return if !env.contains_name(&string) {
+                                        BindResult::Err(format!("Unknown symbol: `{}`", string)
+                                                            .into())
+                                    } else {
+                                        BindResult::Unfinished(sexp)
+                                    }
+                                }
                             }
                         }
                     };
@@ -372,7 +371,8 @@ fn create_binding(env: &Env, sexp: Rc<Sexp>) -> BindResult {
 #[derive(Clone, Debug)]
 pub enum ConstType {
     Unit,
-    I64(i64), // Binding(BindingKey),
+    I64(i64),
+    Bool(bool),
 }
 
 // (def x 10) installs 'x' into current namespace (TopLevel)
@@ -517,4 +517,6 @@ mod test {
     test1!(alias_i64, "(def x 10) (def y x) y", "10");
     test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
 
+    test1!(eval_boolean_t, "true", "true");
+    test1!(eval_boolean_f, "false", "false");
 }

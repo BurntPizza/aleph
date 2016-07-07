@@ -93,7 +93,15 @@ fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Option<Ast>, Box<Error>> {
         Sexp::Atom(span, string) => {
             match string.parse::<i64>() {
                 Ok(val) => Ok(Some(Ast::I64Literal(span, val))),
-                _ => Ok(Some(Ast::Atom(span, BindingKey::String(string)))),
+                _ => {
+                    if string == "true" {
+                        Ok(Some(Ast::BoolLiteral(span, true)))
+                    } else if string == "false" {
+                        Ok(Some(Ast::BoolLiteral(span, false)))
+                    } else {
+                        Ok(Some(Ast::Atom(span, BindingKey::String(string))))
+                    }
+                }
             }
         }
         Sexp::List(span, mut sexps) => {

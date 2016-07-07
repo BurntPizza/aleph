@@ -3,6 +3,7 @@
 
 use std::mem;
 use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter};
 
 use byteorder::*;
 use itertools::*;
@@ -93,6 +94,9 @@ fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
         Ast::I64Literal(span, val) => {
             code.push(MIns::I64(val));
         }
+        Ast::BoolLiteral(span, val) => {
+            code.push(MIns::Bool(val));
+        }
         Ast::Atom(span, ref binding_key) => {
             let record = match *binding_key {
                 BindingKey::String(ref k) => {
@@ -140,6 +144,7 @@ fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
 #[derive(Copy, Clone, Debug)]
 enum MIns {
     I64(i64),
+    Bool(bool),
     // num_args
     Add(usize),
     LoadLocal(u8), // idx in local table
@@ -168,6 +173,14 @@ impl MIns {
 
     fn emit(&self, code: &mut Vec<u8>) {
         match *self {
+            MIns::Bool(val) => {
+                code.push(if val {
+                              Ins::LoadTrue
+                          } else {
+                              Ins::LoadFalse
+                          }
+                          .into())
+            }
             MIns::Add(num_args) => unimplemented!(),
             MIns::LoadLocal(s) => unimplemented!(),
             MIns::SaveLocal(s) => unimplemented!(),
@@ -192,6 +205,8 @@ enum Ins {
 
     Nop,
 
+    LoadTrue,
+    LoadFalse,
     LoadConst,
 
     FnPtr,
@@ -212,6 +227,22 @@ enum Ins {
 
     MarkStack,
     PopToMark,
+}
+
+#[derive(Copy, Clone)]
+enum Slot {
+    Bool(bool),
+    I64(i64),
+}
+
+impl Display for Slot {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let s = match *self {
+            Slot::Bool(val) => val.to_string(),
+            Slot::I64(val) => val.to_string(),
+        };
+        write!(f, "{}", s)
+    }
 }
 
 pub struct Program {
@@ -237,10 +268,16 @@ impl Program {
             match Ins::from(code[i]) {
                 Ins::Fail => unreachable!(),
                 Ins::Nop => {}
+                Ins::LoadTrue => {
+                    data_stack.push(Slot::Bool(true));
+                }
+                Ins::LoadFalse => {
+                    data_stack.push(Slot::Bool(false));
+                }
                 Ins::LoadConst => {
                     let idx = Endianness::read_u16(&code[ins_ptr..ins_ptr + 2]) as usize;
                     ins_ptr += 2;
-                    data_stack.push(const_pool[idx]);
+                    data_stack.push(Slot::I64(const_pool[idx]));
                 }
                 Ins::FnPtr => unimplemented!(),
                 Ins::CallPtr => unimplemented!(),

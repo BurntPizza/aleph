@@ -72,49 +72,6 @@ pub fn read(env: &mut Env, stream: &mut InputStream) -> Result<Vec<Sexp>, Box<Er
     }
 }
 
-// fn sexps_to_forms(env: &mut Env, sexps: Vec<Sexp>) -> Result<Vec<Form>, Box<Error>> {
-//     sexps.into_iter().map(|sexp| sexp_to_form(env, sexp)).collect()
-// }
-
-// fn sexp_to_form(env: &mut Env, sexp: Sexp) -> Result<Form, Box<Error>> {
-//     match sexp {
-//         Sexp::Atom(span, token) => {
-//             let id = env.add_record(token, AtomKind::Var, span);
-//             Ok(Form::Expr(Expr::Atom(id)))
-//         }
-//         Sexp::List(span, mut sexps) => {
-//             match sexps.len() {
-//                 0 => {
-//                     let id = env.add_record("()", AtomKind::Var, span);
-//                     Ok(Form::Expr(Expr::Atom(id)))
-//                 }
-//                 _ => {
-//                     let first = sexps.remove(0);
-
-//                     match first {
-//                         Sexp::List(span, sexps) => {
-//                             //
-//                             Err(unimplemented!())
-//                         }
-//                         Sexp::Atom(span, token) => {
-//                             if lang::is_special(&*token) {
-//                                 parse_special_form(env, token, sexps, span)
-//                             } else {
-//                                 // kind might be/need overwritten?
-//                                 let id = env.add_record(token, AtomKind::Var, span);
-//                                 let callee = Expr::Atom(id);
-//                                 let args = forms_to_exprs(try!(sexps_to_forms(env, sexps)));
-
-//                                 Ok(Form::Expr(Expr::Inv(Box::new(callee), args)))
-//                             }
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     }
-// }
-
 // // TODO: assign actual scope ids (or does that happen during census?)
 // // (think about how the macroexpansion loop affects this)
 // fn parse_special_form(env: &mut Env,
