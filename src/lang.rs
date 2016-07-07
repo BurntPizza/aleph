@@ -261,6 +261,15 @@ impl Env {
                        invalid_source_pos);
         }
 
+        env.insert("true",
+                   Binding::Const(ConstType::Bool(true)),
+                   root_scope_id,
+                   invalid_source_pos);
+        env.insert("false",
+                   Binding::Const(ConstType::Bool(false)),
+                   root_scope_id,
+                   invalid_source_pos);
+
         env
     }
 
