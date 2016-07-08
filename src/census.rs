@@ -111,18 +111,29 @@ fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Option<Ast>, Box<Error>> {
                     let first = sexps.remove(0);
 
                     match first {
-                        Sexp::Atom(span, ref s) if s == "ns" => {
+                        Sexp::Atom(_, ref s) if s == "ns" => {
                             // set current ns
                             // Ok(None)
                             unimplemented!()
                         }
-                        Sexp::Atom(span, ref s) if s == "use" => {
+                        Sexp::Atom(_, ref s) if s == "use" => {
                             // import names
                             // Ok(None)
                             unimplemented!()
                         }
+                        Sexp::Atom(_, ref s) if s == "if" => {
+                            assert_eq!(sexps.len(), 3);
+                            let cond_expr = try!(sexp_to_ast(env, sexps.remove(0))).unwrap();
+                            let then_expr = try!(sexp_to_ast(env, sexps.remove(0))).unwrap();
+                            let else_expr = try!(sexp_to_ast(env, sexps.remove(0))).unwrap();
+
+                            Ok(Some(Ast::If(span,
+                                            Box::new(cond_expr),
+                                            Box::new(then_expr),
+                                            Box::new(else_expr))))
+                        }
                         Sexp::Atom(_, ref s) if s == "def" => Ok(None),
-                        Sexp::Atom(span, ref s) if s == "defreader" => unreachable!(),
+                        Sexp::Atom(_, ref s) if s == "defreader" => unreachable!(),
                         _ => {
                             Ok(Some(Ast::Inv(span,
                                              Box::new(try!(sexp_to_ast(env, first)).unwrap()),

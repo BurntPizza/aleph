@@ -25,12 +25,16 @@ pub fn compile(env: &Env, ast: &[Ast]) -> Result<Program> {
     let mut code = vec![];
     let mut bcode = vec![];
     let mut callsites = vec![];
+    let mut jumpsites = vec![];
     let mut fn_id_to_fn_addr = Table::new();
+    let mut label_id_to_addr = Table::new();
     let mut const_table = vec![];
+
+    let mut labels = LabelGen::new();
 
     // toplevel codegen
     for node in ast {
-        codegen(env, node, &mut code);
+        codegen(env, &mut labels, node, &mut code);
     }
 
     code.push(MIns::Exit);
@@ -40,7 +44,7 @@ pub fn compile(env: &Env, ast: &[Ast]) -> Result<Program> {
         code.push(MIns::FnDefBegin(FnDefId::from(def.id())));
 
         for node in def.ast() {
-            codegen(env, node, &mut code);
+            codegen(env, &mut labels, node, &mut code);
         }
     }
 
@@ -72,9 +76,29 @@ pub fn compile(env: &Env, ast: &[Ast]) -> Result<Program> {
 
                     bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
                 }
+                MIns::Label(id) => {
+                    label_id_to_addr.insert(id, FnAddr::from(bcode.len() as FnAddrT));
+                }
+                MIns::Jmp(id) => {
+                    bcode.push(Ins::Jmp.into());
+                    jumpsites.push((id, bcode.len()));
+                    bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
+                }
+                MIns::JmpIfFalse(id) => {
+                    bcode.push(Ins::JmpF.into());
+                    jumpsites.push((id, bcode.len()));
+                    bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
+                }
                 _ => unreachable!(),
             }
         }
+    }
+
+    // patch jumpsites
+    for (id, addr) in jumpsites {
+        let target_addr = label_id_to_addr[&id].into();
+        Endianness::write_u32(&mut bcode[addr..addr + mem::size_of::<FnAddrT>()],
+                              target_addr);
     }
 
     // patch callsites
@@ -89,7 +113,21 @@ pub fn compile(env: &Env, ast: &[Ast]) -> Result<Program> {
     })
 }
 
-fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
+struct LabelGen(u64);
+
+impl LabelGen {
+    fn new() -> Self {
+        LabelGen(0)
+    }
+
+    fn new_label(&mut self) -> LabelId {
+        let id = self.0;
+        self.0 += 1;
+        LabelId::from(id)
+    }
+}
+
+fn codegen(env: &Env, labels: &mut LabelGen, ast: &Ast, code: &mut Vec<MIns>) {
     match *ast {
         Ast::I64Literal(span, val) => {
             code.push(MIns::I64(val));
@@ -116,7 +154,20 @@ fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
         Ast::EmptyList(..) => unimplemented!(),
         Ast::Do(..) => unimplemented!(),
         Ast::Fn(..) => unimplemented!(),
-        Ast::If(..) => unimplemented!(),
+        Ast::If(_, ref cond_expr, ref then_expr, ref else_expr) => {
+            let label1 = labels.new_label();
+            let label2 = labels.new_label();
+
+            codegen(env, labels, &**cond_expr, code);
+            code.push(MIns::JmpIfFalse(label1));
+
+            codegen(env, labels, &**then_expr, code);
+            code.push(MIns::Jmp(label2));
+            code.push(MIns::Label(label1));
+
+            codegen(env, labels, &**else_expr, code);
+            code.push(MIns::Label(label2));
+        }
         Ast::Inv(span, ref callee, ref args) => {
             // lookup callee
             // lookup and unify args with callee sig
@@ -129,7 +180,7 @@ fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
 
             // note the order
             for arg in args.iter() {
-                codegen(env, arg, code);
+                codegen(env, labels, arg, code);
             }
 
             code.push(MIns::CallFn(fn_def_id));
@@ -141,10 +192,14 @@ fn codegen(env: &Env, ast: &Ast, code: &mut Vec<MIns>) {
 
 
 // macro assembler instructions
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 enum MIns {
     I64(i64),
     Bool(bool),
+
+    Jmp(LabelId),
+    JmpIfFalse(LabelId),
+    Label(LabelId),
     // num_args
     Add(usize),
     LoadLocal(u8), // idx in local table
@@ -166,7 +221,10 @@ impl MIns {
         match *self {
             MIns::FnDefBegin(..) |
             MIns::I64(..) |
-            MIns::CallFn(..) => false,
+            MIns::CallFn(..) |
+            MIns::Jmp(..) |
+            MIns::JmpIfFalse(..) |
+            MIns::Label(..) => false,
             _ => true,
         }
     }
@@ -222,6 +280,9 @@ enum Ins {
 
     Call,
     Ret,
+
+    Jmp,
+    JmpF,
 
     Exit,
 
@@ -288,6 +349,21 @@ impl Program {
                 Ins::Add => unimplemented!(),
                 Ins::Call => unimplemented!(),
                 Ins::Ret => unimplemented!(),
+                Ins::Jmp => {
+                    ins_ptr = Endianness::read_u32(&code[ins_ptr..ins_ptr + 4]) as usize;
+                }
+                Ins::JmpF => {
+                    let addr = Endianness::read_u32(&code[ins_ptr..ins_ptr + 4]) as usize;
+                    ins_ptr += 4;
+                    match data_stack.pop().unwrap() {
+                        Slot::Bool(val) => {
+                            if !val {
+                                ins_ptr = addr;
+                            }
+                        }
+                        _ => panic!("Expected bool"),
+                    }
+                }
                 Ins::Exit => break,
                 Ins::MarkStack => unimplemented!(),
                 Ins::PopToMark => unimplemented!(),
@@ -322,6 +398,7 @@ macro_rules! def_id {
 
 def_id!(FnAddr, FnAddrT);
 def_id!(FnDefId, FnDefIdT);
+def_id!(LabelId, u64);
 
 impl ::std::convert::From<u8> for Ins {
     #[inline]

@@ -126,26 +126,13 @@ pub enum Ast {
     Atom(Span, BindingKey),
     Inv(Span, Box<Ast>, Vec<Ast>),
 
-    Do(Span, Vec<Expr>),
+    Do(Span, Vec<Ast>),
     // params, body
-    Fn(Span, Vec<Expr>, Vec<Expr>),
+    Fn(Span, Vec<Ast>, Vec<Ast>),
     // params, values, body
-    Let(Span, Vec<Expr>, Vec<Expr>, Vec<Expr>),
+    Let(Span, Vec<Ast>, Vec<Ast>, Vec<Ast>),
     // condition, then-expr, else-expr
-    If(Span, Box<Expr>, Box<Expr>, Box<Expr>),
-}
-
-#[derive(Clone, Debug)]
-pub enum Expr {
-    Atom(BindingId),
-    DoExpr(Vec<Expr>),
-    // params, body
-    FnExpr(Vec<Expr>, Vec<Expr>),
-    // params, values, body
-    LetExpr(Vec<Expr>, Vec<Expr>, Vec<Expr>),
-    // condition, then-expr, else-expr
-    IfExpr(Box<Expr>, Box<Expr>, Box<Expr>),
-    Inv(Box<Expr>, Vec<Expr>),
+    If(Span, Box<Ast>, Box<Ast>, Box<Ast>),
 }
 
 pub struct FnDef {
@@ -421,49 +408,6 @@ macro_rules! def_id {
 def_id!(BindingId, u32);
 def_id!(ScopeId, u32);
 
-fn display_expr(env: &Env, expr: &Expr) -> String {
-    match *expr {
-        Expr::Atom(id) => format!("{}", &env.lookup_by_id(id).symbol),
-        Expr::DoExpr(ref args) => display_inv(env, "do", &**args),
-        Expr::FnExpr(ref params, ref body_exprs) => {
-            format!("(fn ({}) {})",
-                    params.iter().map(|e| display_expr(env, e)).join(" "),
-                    body_exprs.iter().map(|e| display_expr(env, e)).join(" "))
-        }
-        Expr::IfExpr(ref condition, ref then_expr, ref else_expr) => {
-            format!("(if {} {} {})",
-                    display_expr(env, condition),
-                    display_expr(env, then_expr),
-                    display_expr(env, else_expr))
-        }
-        Expr::LetExpr(ref params, ref bindings, ref body_exprs) => {
-            let params_bindings = params.iter()
-                                        .zip(bindings.iter())
-                                        .map(|(p, b)| {
-                                            format!("{} {}",
-                                                    display_expr(env, p),
-                                                    display_expr(env, b))
-                                        })
-                                        .join(" ");
-            let body_exprs = body_exprs.iter().map(|e| display_expr(env, e)).join(" ");
-            format!("(let ({}) {})", params_bindings, body_exprs)
-        }
-        Expr::Inv(ref callee, ref args) => display_inv(env, display_expr(env, callee), &**args),
-    }
-}
-
-fn display_inv<T>(env: &Env, callee: T, args: &[Expr]) -> String
-    where T: Into<String>
-{
-    use std::iter::once;
-
-    let exprs = once(callee.into())
-                    .chain(args.iter()
-                               .map(|e| display_expr(env, e)))
-                    .join(" ");
-    format!("({})", exprs)
-}
-
 impl Debug for Env {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use print_table::Alignment::Right;
@@ -528,4 +472,7 @@ mod test {
 
     test1!(eval_boolean_t, "true", "true");
     test1!(eval_boolean_f, "false", "false");
+
+    test1!(eval_if_t, "(if true 0 1)", "0");
+    test1!(eval_if_f, "(if false 0 1)", "1");
 }
