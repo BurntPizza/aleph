@@ -132,6 +132,27 @@ fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Option<Ast>, Box<Error>> {
                                             Box::new(then_expr),
                                             Box::new(else_expr))))
                         }
+                        Sexp::Atom(_, ref s) if s == "let" => {
+                            assert!(sexps.len() >= 2);
+                            let (params, values) = match try!(sexp_to_ast(env, sexps.remove(0)))
+                                                             .unwrap() {
+                                Ast::Inv(_, head, mut rest) => {
+                                    rest.insert(0, *head);
+                                    assert!(rest.len() % 2 == 0);
+                                    rest.into_iter()
+                                        .enumerate()
+                                        .partition_map(|(idx, ast)| if idx % 2 == 0 {
+                                            Partition::Left(ast)
+                                        } else {
+                                            Partition::Right(ast)
+                                        })
+                                }
+                                _ => panic!(),
+                            };
+                            let body_asts = try!(sexps_to_asts(env, sexps));
+
+                            Ok(Some(Ast::Let(span, params, values, body_asts)))
+                        }
                         Sexp::Atom(_, ref s) if s == "def" => Ok(None),
                         Sexp::Atom(_, ref s) if s == "defreader" => unreachable!(),
                         _ => {

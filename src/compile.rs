@@ -185,7 +185,29 @@ fn codegen(env: &Env, labels: &mut LabelGen, ast: &Ast, code: &mut Vec<MIns>) {
 
             code.push(MIns::CallFn(fn_def_id));
         }
-        Ast::Let(..) => unimplemented!(),
+        Ast::Let(span, ref params, ref values, ref body) => {
+            let mut local_env = env.push();
+
+            for (param, value) in params.iter().zip(values.iter()) {
+                match *param {
+                    Ast::Atom(span, ref binding_key) => {
+                        let string = match *binding_key {
+                            BindingKey::String(ref string) => string.clone(),
+                            BindingKey::Id(id) => local_env.lookup_by_id(id).symbol().to_string(),
+                        };
+
+                        local_env.add_record_ast(span, string, value);
+                    }
+                    _ => panic!("param needs to be Atom"), // is this already checked?
+                }
+            }
+
+            local_env.finish_work_list();
+
+            for expr in body {
+                codegen(&mut local_env, labels, expr, code);
+            }
+        }
     }
 }
 

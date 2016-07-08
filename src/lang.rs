@@ -151,6 +151,7 @@ impl FnDef {
 }
 
 pub struct Env {
+    scope: ScopeId,
     fn_defs: Vec<FnDef>,
     id_table: Vec<Rc<BindingRecord>>,
     forward_decls: HashSet<String>,
@@ -159,9 +160,22 @@ pub struct Env {
 }
 
 impl Env {
+    // TODO: figure out and clean up add_record stuff + parse_sexp/create_binding
+
     pub fn add_record(&mut self, span: Span, name: String, rhs: Sexp) {
         self.forward_decls.insert(name.clone());
         self.work_list.push_back((span, name, Rc::new(rhs)));
+    }
+
+    pub fn add_record_ast(&mut self, span: Span, name: String, rhs: &Ast) {
+        self.forward_decls.insert(name.clone());
+        let binding = match create_binding(self, rhs) {
+            BindResult::Ok(binding) => binding,
+            _ => unimplemented!(),
+        };
+
+        let scope = self.current_scope();
+        self.insert(name, binding, scope, span);
     }
 
     pub fn lookup_by_id(&self, id: BindingId) -> Rc<BindingRecord> {
@@ -194,19 +208,42 @@ impl Env {
 
             try!(self.test_name_collision(&name));
 
-            match create_binding(self, def) {
-                BindResult::Ok(binding) => {
-                    let scope = self.current_scope();
-                    self.insert(name, binding, scope, span);
+            match parse_sexp(self, &def) {
+                ParseResult::Ok(ast) => {
+                    match create_binding(self, &ast) {
+                        BindResult::Ok(binding) => {
+                            let scope = self.current_scope();
+                            self.insert(name, binding, scope, span);
+                        }
+                        BindResult::Unfinished => {
+                            self.work_list.push_back((span, name, def));
+                        }
+                        BindResult::Err(e) => return Err(e),
+                    }
                 }
-                BindResult::Unfinished(def) => {
+                ParseResult::Unfishished => {
                     self.work_list.push_back((span, name, def));
+                    continue;
                 }
-                BindResult::Err(e) => return Err(e),
+                ParseResult::Err(e) => return Err(e),
             }
+
+
         }
 
         Ok(())
+    }
+
+    pub fn push(&self) -> Self {
+        let new_env = Env {
+            scope: ScopeId::from(self.scope.0 + 1),
+            fn_defs: vec![],
+            id_table: self.id_table.clone(),
+            forward_decls: self.forward_decls.clone(),
+            work_list: VecDeque::new(),
+        };
+
+        new_env
     }
 
     fn test_name_collision(&self, name: &str) -> Result<()> {
@@ -221,6 +258,7 @@ impl Env {
         let root_scope_id = ScopeId::from(0);
 
         let mut env = Env {
+            scope: ScopeId::from(0),
             fn_defs: vec![],
             // root_ns: ns,
             id_table: vec![],
@@ -261,8 +299,7 @@ impl Env {
     }
 
     fn current_scope(&self) -> ScopeId {
-        // TODO
-        ScopeId::from(0)
+        self.scope
     }
 
     fn insert<T>(&mut self,
@@ -289,11 +326,11 @@ impl Env {
 
 enum ParseResult {
     Ok(Ast),
-    Unfishished(Rc<Sexp>),
+    Unfishished,
     Err(Box<Error>),
 }
 
-fn parse_sexp(env: &Env, sexp: Rc<Sexp>) -> ParseResult {
+fn parse_sexp(env: &Env, sexp: &Sexp) -> ParseResult {
     match *sexp {
         Sexp::Atom(span, ref string) => {
             match string.parse::<i64>() {
@@ -319,6 +356,10 @@ impl BindingRecord {
         self.id
     }
 
+    pub fn symbol(&self) -> &str {
+        &*self.symbol
+    }
+
     pub fn binding(&self) -> &Binding {
         &self.binding
     }
@@ -326,41 +367,34 @@ impl BindingRecord {
 
 enum BindResult {
     Ok(Binding),
-    Unfinished(Rc<Sexp>),
+    Unfinished,
     Err(Box<Error>),
 }
 
-fn create_binding(env: &Env, sexp: Rc<Sexp>) -> BindResult {
-    match parse_sexp(env, sexp.clone()) {
-        ParseResult::Ok(ast) => {
-            match ast {
-                Ast::I64Literal(_, val) => BindResult::Ok(Binding::Const(ConstType::I64(val))),
-                // alias
-                Ast::Atom(_, binding_key) => {
-                    let record = match binding_key {
-                        BindingKey::Id(id) => env.lookup_by_id(id),
-                        BindingKey::String(string) => {
-                            match env.lookup_by_name(&string) {
-                                Some(record) => record,
-                                _ => {
-                                    return if !env.contains_name(&string) {
-                                        BindResult::Err(format!("Unknown symbol: `{}`", string)
-                                                            .into())
-                                    } else {
-                                        BindResult::Unfinished(sexp)
-                                    }
-                                }
+fn create_binding<'a>(env: &Env, ast: &'a Ast) -> BindResult {
+    match *ast {
+        Ast::I64Literal(_, val) => BindResult::Ok(Binding::Const(ConstType::I64(val))),
+        // alias
+        Ast::Atom(_, ref binding_key) => {
+            let record = match *binding_key {
+                BindingKey::Id(id) => env.lookup_by_id(id),
+                BindingKey::String(ref string) => {
+                    match env.lookup_by_name(&string) {
+                        Some(record) => record,
+                        _ => {
+                            return if !env.contains_name(&string) {
+                                BindResult::Err(format!("Unknown symbol: `{}`", string).into())
+                            } else {
+                                BindResult::Unfinished
                             }
                         }
-                    };
-
-                    BindResult::Ok(record.binding().clone())
+                    }
                 }
-                _ => unimplemented!(),
-            }
+            };
+
+            BindResult::Ok(record.binding().clone())
         }
-        ParseResult::Unfishished(sexp) => BindResult::Unfinished(sexp),
-        ParseResult::Err(e) => BindResult::Err(e),
+        _ => unimplemented!(),
     }
 }
 
@@ -475,4 +509,7 @@ mod test {
 
     test1!(eval_if_t, "(if true 0 1)", "0");
     test1!(eval_if_f, "(if false 0 1)", "1");
+    test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
+
+    test1!(eval_let, "(let (a 4) a)", "4");
 }
