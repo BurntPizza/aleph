@@ -258,6 +258,7 @@ impl MIns {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
+#[repr(u8)]
 enum Ins {
     Fail,
 
