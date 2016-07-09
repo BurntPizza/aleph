@@ -98,6 +98,7 @@ fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Ast, Box<Error>> {
                     } else if string == "false" {
                         Ok(Ast::BoolLiteral(span, false))
                     } else {
+                        println!("pre-lookup: {:?}", env);
                         Ok(Ast::Atom(span, env.lookup_by_name(&*string).expect("oh no").id()))
                     }
                 }

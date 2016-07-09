@@ -53,43 +53,60 @@ pub fn compile(env: &Env, ast: &[Ast]) -> Result<Program> {
 
     // TODO: opt passes here
 
+
+    // assemble
     for mins in code {
-        if mins.is_simple() {
-            mins.emit(&mut bcode);
-        } else {
-            match mins {
-                MIns::FnDefBegin(id) => {
-                    fn_id_to_fn_addr.insert(id, FnAddr::from(bcode.len() as FnAddrT));
-                }
-                MIns::I64(val) => {
-                    let idx = const_table.len() as ConstTableIdx;
-                    const_table.push(val); // TODO: Slot
+        match mins {
+            MIns::Bool(val) => {
+                bcode.push(match val {
+                               true => Ins::LoadTrue,
+                               _ => Ins::LoadFalse,
+                           }
+                           .into())
+            }
+            MIns::Add(num_args) => unimplemented!(),
+            MIns::LoadLocal(s) => unimplemented!(),
+            MIns::SaveLocal(s) => unimplemented!(),
+            MIns::Ret => unimplemented!(),
+            MIns::Exit => bcode.push(Ins::Exit.into()),
 
-                    bcode.push(Ins::LoadConst.into());
-                    bcode.write_u16::<Endianness>(idx).unwrap();
-                }
-                MIns::CallFn(id) => {
-                    bcode.push(Ins::Call.into());
+            MIns::FnPtr(id) => unimplemented!(),
+            MIns::CallPtr => unimplemented!(),
 
-                    let current_idx = bcode.len();
-                    callsites.push((current_idx, id));
+            MIns::MarkStack => unimplemented!(),
+            MIns::PopToMark => unimplemented!(),
 
-                    bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
-                }
-                MIns::Label(id) => {
-                    label_id_to_addr.insert(id, FnAddr::from(bcode.len() as FnAddrT));
-                }
-                MIns::Jmp(id) => {
-                    bcode.push(Ins::Jmp.into());
-                    jumpsites.push((id, bcode.len()));
-                    bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
-                }
-                MIns::JmpIfFalse(id) => {
-                    bcode.push(Ins::JmpF.into());
-                    jumpsites.push((id, bcode.len()));
-                    bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
-                }
-                _ => unreachable!(),
+            // ///////////////////////
+            MIns::FnDefBegin(id) => {
+                fn_id_to_fn_addr.insert(id, FnAddr::from(bcode.len() as FnAddrT));
+            }
+            MIns::I64(val) => {
+                let idx = const_table.len() as ConstTableIdx;
+                const_table.push(val); // TODO: Slot
+
+                bcode.push(Ins::LoadConst.into());
+                bcode.write_u16::<Endianness>(idx).unwrap();
+            }
+            MIns::CallFn(id) => {
+                bcode.push(Ins::Call.into());
+
+                let current_idx = bcode.len();
+                callsites.push((current_idx, id));
+
+                bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
+            }
+            MIns::Label(id) => {
+                label_id_to_addr.insert(id, FnAddr::from(bcode.len() as FnAddrT));
+            }
+            MIns::Jmp(id) => {
+                bcode.push(Ins::Jmp.into());
+                jumpsites.push((id, bcode.len()));
+                bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
+            }
+            MIns::JmpIfFalse(id) => {
+                bcode.push(Ins::JmpF.into());
+                jumpsites.push((id, bcode.len()));
+                bcode.write_u32::<Endianness>(0 as FnAddrT).unwrap();
             }
         }
     }
@@ -212,47 +229,6 @@ enum MIns {
     FnDefBegin(FnDefId),
     MarkStack,
     PopToMark,
-}
-
-impl MIns {
-    fn is_simple(&self) -> bool {
-        match *self {
-            MIns::FnDefBegin(..) |
-            MIns::I64(..) |
-            MIns::CallFn(..) |
-            MIns::Jmp(..) |
-            MIns::JmpIfFalse(..) |
-            MIns::Label(..) => false,
-            _ => true,
-        }
-    }
-
-    fn emit(&self, code: &mut Vec<u8>) {
-        match *self {
-            MIns::Bool(val) => {
-                code.push(if val {
-                              Ins::LoadTrue
-                          } else {
-                              Ins::LoadFalse
-                          }
-                          .into())
-            }
-            MIns::Add(num_args) => unimplemented!(),
-            MIns::LoadLocal(s) => unimplemented!(),
-            MIns::SaveLocal(s) => unimplemented!(),
-            MIns::CallFn(id) => unimplemented!(),
-            MIns::Ret => unimplemented!(),
-            MIns::Exit => code.push(Ins::Exit.into()),
-
-            MIns::FnPtr(id) => unimplemented!(),
-            MIns::CallPtr => unimplemented!(),
-
-            MIns::MarkStack => unimplemented!(),
-            MIns::PopToMark => unimplemented!(),
-
-            _ => unreachable!(),
-        }
-    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]

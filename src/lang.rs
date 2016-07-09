@@ -187,7 +187,18 @@ impl Env {
     {
         let symbol = symbol.as_ref();
         // self.id_table.get(symbol).cloned()
-        self.id_table.values().find(|record| record.symbol == symbol).cloned()
+        let mut best_match: Option<Rc<BindingRecord>> = None;
+
+        for record in self.id_table.values().filter(|record| record.symbol() == symbol) {
+            if record.scope() == self.current_scope() {
+                return Some(record.clone());
+            }
+            if let Some(true) = best_match.clone().map(|r| record.scope() > r.scope()) {
+                best_match = Some(record.clone());
+            }
+        }
+
+        best_match
     }
 
     pub fn contains_name<T>(&self, symbol: T) -> bool
@@ -353,6 +364,10 @@ impl BindingRecord {
     pub fn binding(&self) -> &Binding {
         &self.binding
     }
+
+    pub fn scope(&self) -> ScopeId {
+        self.scope
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -378,7 +393,7 @@ pub enum Binding {
 
 macro_rules! def_id {
     ($name:ident, $ty:ty) => {
-        #[derive(PartialEq, Eq, Hash, Copy, Clone, Debug)]
+        #[derive(PartialEq, PartialOrd, Eq, Hash, Copy, Clone, Debug)]
         pub struct $name($ty);
 
         impl ::std::convert::From<$ty> for $name {
@@ -405,6 +420,8 @@ impl Debug for Env {
 
         let rows = self.id_table
                        .iter()
+                       .sorted_by(|&(a, _), &(b, _)| a.0.cmp(&b.0))
+                       .into_iter()
                        .map(|(_, br)| {
                            vec![br.id().to_string(),
                                 br.symbol.clone(),
@@ -470,4 +487,6 @@ mod test {
 
     test1!(eval_let, "(let (a 4) a)", "4");
     test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
+
+    // test1!(fn_eval, "(fn (a) a)", "");
 }
