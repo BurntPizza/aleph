@@ -8,7 +8,7 @@ use std::fmt::{self, Display, Formatter};
 use byteorder::*;
 use itertools::*;
 
-use lang::{Env, Ast, BindingKey, Binding, ConstType, Result};
+use lang::{Env, Ast, Binding, ConstType, Result};
 
 type Endianness = NativeEndian;
 type Table<K, V> = HashMap<K, V>;
@@ -135,14 +135,8 @@ fn codegen(env: &Env, labels: &mut LabelGen, ast: &Ast, code: &mut Vec<MIns>) {
         Ast::BoolLiteral(span, val) => {
             code.push(MIns::Bool(val));
         }
-        Ast::Atom(span, ref binding_key) => {
-            let record = match *binding_key {
-                BindingKey::String(ref k) => {
-                    env.lookup_by_name(k).expect("no binding found by that name")
-                }
-                BindingKey::Id(k) => env.lookup_by_id(k),
-            };
-
+        Ast::Atom(span, id) => {
+            let record = env.lookup_by_id(id);
             match *record.binding() {
                 // 'x' after '(def x 10)'
                 Binding::Const(ConstType::I64(val)) => {
@@ -185,27 +179,9 @@ fn codegen(env: &Env, labels: &mut LabelGen, ast: &Ast, code: &mut Vec<MIns>) {
 
             code.push(MIns::CallFn(fn_def_id));
         }
-        Ast::Let(span, ref params, ref values, ref body) => {
-            let mut local_env = env.push();
-
-            for (param, value) in params.iter().zip(values.iter()) {
-                match *param {
-                    Ast::Atom(span, ref binding_key) => {
-                        let string = match *binding_key {
-                            BindingKey::String(ref string) => string.clone(),
-                            BindingKey::Id(id) => local_env.lookup_by_id(id).symbol().to_string(),
-                        };
-
-                        local_env.add_record_ast(span, string, value);
-                    }
-                    _ => panic!("param needs to be Atom"), // is this already checked?
-                }
-            }
-
-            local_env.finish_work_list();
-
+        Ast::Let(span, ref binding_list, ref body) => {
             for expr in body {
-                codegen(&mut local_env, labels, expr, code);
+                codegen(env, labels, expr, code);
             }
         }
     }

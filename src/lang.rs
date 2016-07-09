@@ -109,13 +109,6 @@ fn is_directive<T>(symbol: T) -> bool
     DIRECTIVES.contains(&symbol.as_ref())
 }
 
-// TODO: better name
-#[derive(Clone, Debug)]
-pub enum BindingKey {
-    String(String),
-    Id(BindingId),
-}
-
 #[derive(Debug)]
 pub enum Ast {
     EmptyList(Span),
@@ -123,14 +116,14 @@ pub enum Ast {
     I64Literal(Span, i64),
     BoolLiteral(Span, bool),
 
-    Atom(Span, BindingKey),
+    Atom(Span, BindingId),
     Inv(Span, Box<Ast>, Vec<Ast>),
 
     Do(Span, Vec<Ast>),
     // params, body
     Fn(Span, Vec<Ast>, Vec<Ast>),
-    // params, values, body
-    Let(Span, Vec<Ast>, Vec<Ast>, Vec<Ast>),
+    // (params, values), body
+    Let(Span, Vec<(BindingId, Ast)>, Vec<Ast>),
     // condition, then-expr, else-expr
     If(Span, Box<Ast>, Box<Ast>, Box<Ast>),
 }
@@ -151,9 +144,10 @@ impl FnDef {
 }
 
 pub struct Env {
-    scope: ScopeId,
+    scope_counter: u32,
+    scope_tracker: Vec<ScopeId>,
     fn_defs: Vec<FnDef>,
-    id_table: Vec<Rc<BindingRecord>>,
+    id_table: HashMap<BindingId, Rc<BindingRecord>>,
     forward_decls: HashSet<String>,
     // yet-to-be parsed
     work_list: VecDeque<(Span, String, Rc<Sexp>)>,
@@ -162,24 +156,27 @@ pub struct Env {
 impl Env {
     // TODO: figure out and clean up add_record stuff + parse_sexp/create_binding
 
-    pub fn add_record(&mut self, span: Span, name: String, rhs: Sexp) {
+    pub fn lazy_add_def(&mut self, span: Span, name: String, def: Sexp) {
         self.forward_decls.insert(name.clone());
-        self.work_list.push_back((span, name, Rc::new(rhs)));
+        self.work_list.push_back((span, name, Rc::new(def)));
     }
 
-    pub fn add_record_ast(&mut self, span: Span, name: String, rhs: &Ast) {
+    pub fn add_record_ast(&mut self, span: Span, name: String, rhs: &Ast) -> Rc<BindingRecord> {
         self.forward_decls.insert(name.clone());
-        let binding = match create_binding(self, rhs) {
-            BindResult::Ok(binding) => binding,
+
+        let binding = match *rhs {
+            Ast::I64Literal(_, val) => Binding::Const(ConstType::I64(val)),
+            // alias
+            Ast::Atom(_, id) => self.lookup_by_id(id).binding().clone(),
             _ => unimplemented!(),
         };
 
         let scope = self.current_scope();
-        self.insert(name, binding, scope, span);
+        self.insert(name, binding, scope, span)
     }
 
     pub fn lookup_by_id(&self, id: BindingId) -> Rc<BindingRecord> {
-        match self.id_table.get(*id as usize).cloned() {
+        match self.id_table.get(&id).cloned() {
             Some(record) => record,
             None => panic!("`{:?}` not present in {:#?}", id, self),
         }
@@ -189,7 +186,8 @@ impl Env {
         where T: AsRef<str>
     {
         let symbol = symbol.as_ref();
-        self.id_table.iter().find(|record| record.symbol == symbol).cloned()
+        // self.id_table.get(symbol).cloned()
+        self.id_table.values().find(|record| record.symbol == symbol).cloned()
     }
 
     pub fn contains_name<T>(&self, symbol: T) -> bool
@@ -208,42 +206,44 @@ impl Env {
 
             try!(self.test_name_collision(&name));
 
-            match parse_sexp(self, &def) {
-                ParseResult::Ok(ast) => {
-                    match create_binding(self, &ast) {
-                        BindResult::Ok(binding) => {
+            match *def {
+                Sexp::Atom(_, ref string) => {
+                    match string.parse::<i64>() {
+                        Ok(val) => {
+                            let binding = Binding::Const(ConstType::I64(val));
                             let scope = self.current_scope();
                             self.insert(name, binding, scope, span);
                         }
-                        BindResult::Unfinished => {
-                            self.work_list.push_back((span, name, def));
+                        _ => {
+                            let binding = match self.lookup_by_name(&*string) {
+                                Some(record) => record.binding().clone(),
+                                _ => {
+                                    self.work_list.push_back((span, name, def.clone()));
+                                    continue;
+                                }
+                            };
+
+                            let scope = self.current_scope();
+                            self.insert(name, binding, scope, span);
                         }
-                        BindResult::Err(e) => return Err(e),
+
                     }
                 }
-                ParseResult::Unfishished => {
-                    self.work_list.push_back((span, name, def));
-                    continue;
-                }
-                ParseResult::Err(e) => return Err(e),
+                Sexp::List(_, ref sexps) => unimplemented!(),
             }
-
-
         }
 
         Ok(())
     }
 
-    pub fn push(&self) -> Self {
-        let new_env = Env {
-            scope: ScopeId::from(self.scope.0 + 1),
-            fn_defs: vec![],
-            id_table: self.id_table.clone(),
-            forward_decls: self.forward_decls.clone(),
-            work_list: VecDeque::new(),
-        };
+    pub fn push(&mut self) {
+        self.scope_counter += 1;
+        let scope = ScopeId::from(self.scope_counter);
+        self.scope_tracker.push(scope);
+    }
 
-        new_env
+    pub fn pop(&mut self) -> ScopeId {
+        self.scope_tracker.pop().unwrap()
     }
 
     fn test_name_collision(&self, name: &str) -> Result<()> {
@@ -258,10 +258,11 @@ impl Env {
         let root_scope_id = ScopeId::from(0);
 
         let mut env = Env {
-            scope: ScopeId::from(0),
+            scope_counter: 0,
+            scope_tracker: vec![root_scope_id],
             fn_defs: vec![],
             // root_ns: ns,
-            id_table: vec![],
+            id_table: HashMap::new(),
             forward_decls: HashSet::new(),
             work_list: VecDeque::new(),
         };
@@ -299,7 +300,7 @@ impl Env {
     }
 
     fn current_scope(&self) -> ScopeId {
-        self.scope
+        *self.scope_tracker.last().unwrap()
     }
 
     fn insert<T>(&mut self,
@@ -308,37 +309,26 @@ impl Env {
                  binding: Binding,
                  scope: ScopeId,
                  pos: Span)
+                 -> Rc<BindingRecord>
         where T: Into<String>
     {
         let symbol = symbol.into();
         self.forward_decls.insert(symbol.clone());
-        let id = BindingId::from(self.id_table.len() as u32);
-        let record = BindingRecord {
+        let id = self.next_binding_id();
+        let record = Rc::new(BindingRecord {
             id: id,
             pos: pos,
             symbol: symbol,
             scope: scope,
             binding: binding,
-        };
-        self.id_table.push(Rc::new(record));
+        });
+
+        self.id_table.insert(id, record.clone());
+        record
     }
-}
 
-enum ParseResult {
-    Ok(Ast),
-    Unfishished,
-    Err(Box<Error>),
-}
-
-fn parse_sexp(env: &Env, sexp: &Sexp) -> ParseResult {
-    match *sexp {
-        Sexp::Atom(span, ref string) => {
-            match string.parse::<i64>() {
-                Ok(val) => ParseResult::Ok(Ast::I64Literal(span, val)),
-                _ => ParseResult::Ok(Ast::Atom(span, BindingKey::String(string.clone()))),
-            }
-        }
-        Sexp::List(_, ref sexps) => unimplemented!(),
+    fn next_binding_id(&self) -> BindingId {
+        BindingId::from(self.id_table.len() as u32)
     }
 }
 
@@ -362,39 +352,6 @@ impl BindingRecord {
 
     pub fn binding(&self) -> &Binding {
         &self.binding
-    }
-}
-
-enum BindResult {
-    Ok(Binding),
-    Unfinished,
-    Err(Box<Error>),
-}
-
-fn create_binding<'a>(env: &Env, ast: &'a Ast) -> BindResult {
-    match *ast {
-        Ast::I64Literal(_, val) => BindResult::Ok(Binding::Const(ConstType::I64(val))),
-        // alias
-        Ast::Atom(_, ref binding_key) => {
-            let record = match *binding_key {
-                BindingKey::Id(id) => env.lookup_by_id(id),
-                BindingKey::String(ref string) => {
-                    match env.lookup_by_name(&string) {
-                        Some(record) => record,
-                        _ => {
-                            return if !env.contains_name(&string) {
-                                BindResult::Err(format!("Unknown symbol: `{}`", string).into())
-                            } else {
-                                BindResult::Unfinished
-                            }
-                        }
-                    }
-                }
-            };
-
-            BindResult::Ok(record.binding().clone())
-        }
-        _ => unimplemented!(),
     }
 }
 
@@ -448,7 +405,7 @@ impl Debug for Env {
 
         let rows = self.id_table
                        .iter()
-                       .map(|br| {
+                       .map(|(_, br)| {
                            vec![br.id().to_string(),
                                 br.symbol.clone(),
                                 format!("{:?}", br.binding()),
@@ -512,4 +469,5 @@ mod test {
     test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
 
     test1!(eval_let, "(let (a 4) a)", "4");
+    test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
 }

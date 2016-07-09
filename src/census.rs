@@ -4,7 +4,7 @@ use std::iter::once;
 use std::error::Error;
 
 use read::{Sexp, Span};
-use lang::{Env, Ast, BindingKey};
+use lang::{Env, Ast};
 
 
 pub fn census(env: &mut Env, mut sexps: Vec<Sexp>) -> Result<Vec<Ast>, Box<Error>> {
@@ -17,7 +17,7 @@ pub fn census(env: &mut Env, mut sexps: Vec<Sexp>) -> Result<Vec<Ast>, Box<Error
 
             match name {
                 Sexp::Atom(_, string) => {
-                    env.add_record(span, string, rhs);
+                    env.lazy_add_def(span, string, rhs);
                 }
                 _ => return Err(format!("First arg of `def` must be a symbol: {:?}", name).into()),
             }
@@ -81,32 +81,31 @@ fn def_occurs_check<'a, T>(sexps: T) -> Result<(), Box<Error>>
 fn sexps_to_asts(env: &mut Env, sexps: Vec<Sexp>) -> Result<Vec<Ast>, Box<Error>> {
     sexps.into_iter()
          .filter_map(|sexp| match sexp_to_ast(env, sexp) {
-             Ok(Some(ast)) => Some(Ok(ast)),
-             Ok(None) => None,
+             Ok(ast) => Some(Ok(ast)),
              Err(e) => Some(Err(e)),
          })
          .fold_results(vec![], vec_collector)
 }
 
-fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Option<Ast>, Box<Error>> {
+fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Ast, Box<Error>> {
     match sexp {
         Sexp::Atom(span, string) => {
             match string.parse::<i64>() {
-                Ok(val) => Ok(Some(Ast::I64Literal(span, val))),
+                Ok(val) => Ok(Ast::I64Literal(span, val)),
                 _ => {
                     if string == "true" {
-                        Ok(Some(Ast::BoolLiteral(span, true)))
+                        Ok(Ast::BoolLiteral(span, true))
                     } else if string == "false" {
-                        Ok(Some(Ast::BoolLiteral(span, false)))
+                        Ok(Ast::BoolLiteral(span, false))
                     } else {
-                        Ok(Some(Ast::Atom(span, BindingKey::String(string))))
+                        Ok(Ast::Atom(span, env.lookup_by_name(&*string).expect("oh no").id()))
                     }
                 }
             }
         }
         Sexp::List(span, mut sexps) => {
             match sexps.len() {
-                0 => Ok(Some(Ast::EmptyList(span))),
+                0 => Ok(Ast::EmptyList(span)),
                 _ => {
                     let first = sexps.remove(0);
 
@@ -123,47 +122,64 @@ fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Option<Ast>, Box<Error>> {
                         }
                         Sexp::Atom(_, ref s) if s == "if" => {
                             assert_eq!(sexps.len(), 3);
-                            let cond_expr = try!(sexp_to_ast(env, sexps.remove(0))).unwrap();
-                            let then_expr = try!(sexp_to_ast(env, sexps.remove(0))).unwrap();
-                            let else_expr = try!(sexp_to_ast(env, sexps.remove(0))).unwrap();
 
-                            Ok(Some(Ast::If(span,
-                                            Box::new(cond_expr),
-                                            Box::new(then_expr),
-                                            Box::new(else_expr))))
+                            let cond_expr = try!(sexp_to_ast(env, sexps.remove(0)));
+                            let then_expr = try!(sexp_to_ast(env, sexps.remove(0)));
+                            let else_expr = try!(sexp_to_ast(env, sexps.remove(0)));
+
+                            Ok(Ast::If(span,
+                                       Box::new(cond_expr),
+                                       Box::new(then_expr),
+                                       Box::new(else_expr)))
                         }
                         Sexp::Atom(_, ref s) if s == "let" => {
                             assert!(sexps.len() >= 2);
-                            let (params, values) = match try!(sexp_to_ast(env, sexps.remove(0)))
-                                                             .unwrap() {
-                                Ast::Inv(_, head, mut rest) => {
-                                    rest.insert(0, *head);
-                                    assert!(rest.len() % 2 == 0);
-                                    rest.into_iter()
-                                        .enumerate()
-                                        .partition_map(|(idx, ast)| if idx % 2 == 0 {
-                                            Partition::Left(ast)
-                                        } else {
-                                            Partition::Right(ast)
-                                        })
-                                }
-                                _ => panic!(),
-                            };
-                            let body_asts = try!(sexps_to_asts(env, sexps));
+                            env.push();
 
-                            Ok(Some(Ast::Let(span, params, values, body_asts)))
+                            let binding_list_src = match sexps.remove(0) {
+                                Sexp::List(_, sexps) => {
+                                    assert!(sexps.len() % 2 == 0);
+
+                                    sexps.into_iter()
+                                         .chunks_lazy(2)
+                                         .into_iter()
+                                         .map(|mut chunk| {
+                                             let (param_span, param_name) = match chunk.next()
+                                                                                       .unwrap() {
+                                                 Sexp::Atom(span, string) => (span, string),
+                                                 _ => panic!("param must be Atom"),
+                                             };
+                                             let value = chunk.next().unwrap();
+
+                                             (param_span, param_name, value)
+                                         })
+                                         .collect_vec()
+                                }
+                                _ => panic!("First arg of `let` must be a list"),
+                            };
+
+                            let mut binding_list = vec![];
+
+                            for (span, name, value_sexp) in binding_list_src {
+                                let value = try!(sexp_to_ast(env, value_sexp));
+                                let record = env.add_record_ast(span, name, &value);
+
+                                binding_list.push((record.id(), value));
+                            }
+
+                            let body_asts = try!(sexps_to_asts(env, sexps));
+                            env.pop();
+
+                            Ok(Ast::Let(span, binding_list, body_asts))
                         }
-                        Sexp::Atom(_, ref s) if s == "def" => Ok(None),
+                        Sexp::Atom(_, ref s) if s == "def" => unreachable!(),
                         Sexp::Atom(_, ref s) if s == "defreader" => unreachable!(),
                         _ => {
-                            Ok(Some(Ast::Inv(span,
-                                             Box::new(try!(sexp_to_ast(env, first)).unwrap()),
-                                             try!(sexps.into_iter()
-                                                       .map(|sexp| {
-                                                           sexp_to_ast(env, sexp)
-                                                               .map(Option::unwrap)
-                                                       })
-                                                       .fold_results(vec![], vec_collector)))))
+                            Ok(Ast::Inv(span,
+                                        Box::new(try!(sexp_to_ast(env, first))),
+                                        try!(sexps.into_iter()
+                                                  .map(|sexp| sexp_to_ast(env, sexp))
+                                                  .fold_results(vec![], vec_collector))))
                         }
                     }
                 }
