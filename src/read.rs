@@ -270,6 +270,14 @@ enum ReaderState {
 pub type ReaderMacroFunction = fn(&mut InputStream, &mut Env, u8)
                                   -> ::std::result::Result<Option<Sexp>, ReadError>;
 
+fn new_node_id() -> usize {
+    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+    static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+
+    COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+
 #[derive(Copy, Clone)]
 pub struct Span {
     idx: usize,
@@ -293,15 +301,15 @@ impl Debug for Span {
 
 #[derive(Debug, Clone)]
 pub enum Sexp {
-    Atom(Span, String),
-    List(Span, Vec<Sexp>),
+    Atom(usize, Span, String),
+    List(usize, Span, Vec<Sexp>),
 }
 
 impl Display for Sexp {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
-            Sexp::Atom(_, ref string) => write!(f, "{}", string),
-            Sexp::List(_, ref children) => {
+            Sexp::Atom(_, _, ref string) => write!(f, "{}", string),
+            Sexp::List(_, _, ref children) => {
                 write!(f,
                        "({})",
                        children.iter().map(ToString::to_string).join(" "))
@@ -441,7 +449,7 @@ fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<
             TokenFinished => {
                 let token = String::from_utf8(token).unwrap();
                 let span = Span::new(positition, token.len());
-                return Ok(Sexp::Atom(span, token));
+                return Ok(Sexp::Atom(new_node_id(), span, token));
             }
         }
     }
@@ -593,7 +601,7 @@ pub fn left_paren_reader(stream: &mut InputStream,
             Some(c) if c == b')' => {
                 let len = stream.pos() - position;
                 let span = Span::new(position, len);
-                return Ok(Some(Sexp::List(span, list)));
+                return Ok(Some(Sexp::List(new_node_id(), span, list)));
             }
             Some(_) => {
                 stream.unread();

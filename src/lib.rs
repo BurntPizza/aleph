@@ -13,11 +13,12 @@ extern crate byteorder;
 extern crate custom_derive;
 #[macro_use]
 extern crate enum_derive;
+extern crate disjoint_sets;
 
 mod lang;
 mod read;
-mod census;
-mod compile;
+// mod census;
+// mod compile;
 mod print_table;
 
 // pub mod reader;

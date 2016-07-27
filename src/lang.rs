@@ -6,25 +6,8 @@ use std::convert::Into;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::{self, Debug, Formatter};
 
-use read::{self, Span, Sexp, InputStream};
-use compile;
+use read::{Span, Sexp, InputStream};
 use print_table;
-
-
-// fn callsite:
-// vm_push_ret_addr()
-// vm_jmp(fn_ptr)
-
-// fn def:
-// expands to:
-// (let [arg1 (__vm_pop)
-//       arg2 (__vm_pop)
-//       ...]
-//   <body>)
-// (__vm_ret)
-
-
-
 
 
 // (syntactic) Forms:
@@ -60,29 +43,17 @@ use print_table;
 // '(vec a b 2)' expr -> ref to obj (constant only if a, b are constant)
 // 'x' expr -> ref to obj (constant if x is a non-local binding)
 
-// reader: Text -> Form(s)
-// census + macroexpand: Form -> Expr
-
 pub type Table<K, V> = HashMap<K, V>;
 pub type Result<T> = ::std::result::Result<T, Box<Error>>;
 
-fn read_in_default_ns_and_env<T>(input: T) -> Vec<Sexp>
-    where T: Into<String>
-{
-    let mut env = Default::default();
-    let mut stream = InputStream::new(input.into());
-
-    read::read(&mut env, &mut stream).unwrap()
-}
-
-fn macroexpand(env: &Env, forms: &mut [Sexp]) -> Result<()> {
-    // TODO
-    unimplemented!()
-}
-
-fn exec(env: &Env, asts: &[Ast]) -> Result<String> {
-    let program = try!(compile::compile(env, asts));
-    Ok(program.exec())
+fn interpret(ast: &Ast) -> Result<String> {
+    match *ast {
+        Ast::Atom(_, _, _, ref id) => unimplemented!(),
+        Ast::BoolLiteral(_, _, _, val) => unimplemented!(),
+        Ast::Do(_, _, _, ref asts) => unimplemented!(),
+        Ast::EmptyList(_, _, _) => unimplemented!(),
+        _ => unimplemented!(),
+    }
 }
 
 const SPECIALS: [&'static str; 9] = ["let",
@@ -108,26 +79,6 @@ fn is_directive<T>(symbol: T) -> bool
 {
     DIRECTIVES.contains(&symbol.as_ref())
 }
-
-#[derive(Debug)]
-pub enum Ast {
-    EmptyList(Span),
-
-    I64Literal(Span, i64),
-    BoolLiteral(Span, bool),
-
-    Atom(Span, BindingId),
-    Inv(Span, Box<Ast>, Vec<Ast>),
-
-    Do(Span, Vec<Ast>),
-    // params, body
-    Fn(Span, Vec<Ast>, Vec<Ast>),
-    // (params, values), body
-    Let(Span, Vec<(BindingId, Ast)>, Vec<Ast>),
-    // condition, then-expr, else-expr
-    If(Span, Box<Ast>, Box<Ast>, Box<Ast>),
-}
-
 pub struct FnDef {
     ast: Vec<Ast>,
     id: u32,
@@ -143,232 +94,24 @@ impl FnDef {
     }
 }
 
-pub struct Env {
-    scope_counter: u32,
-    scope_tracker: Vec<ScopeId>,
-    fn_defs: Vec<FnDef>,
-    id_table: HashMap<BindingId, Rc<BindingRecord>>,
-    forward_decls: HashSet<String>,
-    // yet-to-be parsed
-    work_list: VecDeque<(Span, String, Rc<Sexp>)>,
-}
+//         for &name in &SPECIALS {
+//             env.insert(name,
+//                        // AtomKind::Macro,
+//                        Binding::ExternalConst,
+//                        root_scope_id,
+//                        invalid_source_pos);
+//         }
 
-impl Env {
-    // TODO: figure out and clean up add_record stuff + parse_sexp/create_binding
+//         env.insert("true",
+//                    Binding::Const(ConstType::Bool(true)),
+//                    root_scope_id,
+//                    invalid_source_pos);
+//         env.insert("false",
+//                    Binding::Const(ConstType::Bool(false)),
+//                    root_scope_id,
+//                    invalid_source_pos);
 
-    pub fn lazy_add_def(&mut self, span: Span, name: String, def: Sexp) {
-        self.forward_decls.insert(name.clone());
-        self.work_list.push_back((span, name, Rc::new(def)));
-    }
-
-    pub fn add_record_ast(&mut self, span: Span, name: String, rhs: &Ast) -> Rc<BindingRecord> {
-        self.forward_decls.insert(name.clone());
-
-        let binding = match *rhs {
-            Ast::I64Literal(_, val) => Binding::Const(ConstType::I64(val)),
-            // alias
-            Ast::Atom(_, id) => self.lookup_by_id(id).binding().clone(),
-            _ => unimplemented!(),
-        };
-
-        let scope = self.current_scope();
-        self.insert(name, binding, scope, span)
-    }
-
-    pub fn lookup_by_id(&self, id: BindingId) -> Rc<BindingRecord> {
-        match self.id_table.get(&id).cloned() {
-            Some(record) => record,
-            None => panic!("`{:?}` not present in {:#?}", id, self),
-        }
-    }
-
-    pub fn lookup_by_name<T>(&self, symbol: T) -> Option<Rc<BindingRecord>>
-        where T: AsRef<str>
-    {
-        let symbol = symbol.as_ref();
-        // self.id_table.get(symbol).cloned()
-        let mut best_match: Option<Rc<BindingRecord>> = None;
-
-        for record in self.id_table.values().filter(|record| record.symbol() == symbol) {
-            if record.scope() == self.current_scope() {
-                return Some(record.clone());
-            }
-            if let Some(true) = best_match.clone().map(|r| record.scope() > r.scope()) {
-                best_match = Some(record.clone());
-            }
-        }
-
-        best_match
-    }
-
-    pub fn contains_name<T>(&self, symbol: T) -> bool
-        where T: AsRef<str>
-    {
-        self.forward_decls.contains(symbol.as_ref())
-    }
-
-    pub fn fn_defs(&self) -> &[FnDef] {
-        &*self.fn_defs
-    }
-
-    pub fn finish_work_list(&mut self) -> Result<()> {
-        while !self.work_list.is_empty() {
-            let (span, name, def) = self.work_list.pop_front().unwrap();
-
-            try!(self.test_name_collision(&name));
-
-            match *def {
-                Sexp::Atom(_, ref string) => {
-                    match string.parse::<i64>() {
-                        Ok(val) => {
-                            let binding = Binding::Const(ConstType::I64(val));
-                            let scope = self.current_scope();
-                            self.insert(name, binding, scope, span);
-                        }
-                        _ => {
-                            let binding = match self.lookup_by_name(&*string) {
-                                Some(record) => record.binding().clone(),
-                                _ => {
-                                    self.work_list.push_back((span, name, def.clone()));
-                                    continue;
-                                }
-                            };
-
-                            let scope = self.current_scope();
-                            self.insert(name, binding, scope, span);
-                        }
-
-                    }
-                }
-                Sexp::List(_, ref sexps) => unimplemented!(),
-            }
-        }
-
-        Ok(())
-    }
-
-    pub fn push(&mut self) {
-        self.scope_counter += 1;
-        let scope = ScopeId::from(self.scope_counter);
-        self.scope_tracker.push(scope);
-    }
-
-    pub fn pop(&mut self) -> ScopeId {
-        self.scope_tracker.pop().unwrap()
-    }
-
-    fn test_name_collision(&self, name: &str) -> Result<()> {
-        match self.lookup_by_name(name) {
-            Some(_) => Err(format!("Name collision: {}", name).into()),
-            _ => Ok(()),
-        }
-    }
-
-    fn new<T: Into<String>>(ns: T) -> Self {
-        let invalid_source_pos = Span::new(0, 0);
-        let root_scope_id = ScopeId::from(0);
-
-        let mut env = Env {
-            scope_counter: 0,
-            scope_tracker: vec![root_scope_id],
-            fn_defs: vec![],
-            // root_ns: ns,
-            id_table: HashMap::new(),
-            forward_decls: HashSet::new(),
-            work_list: VecDeque::new(),
-        };
-
-
-
-        // define the macro / special dichotomy (and if it needs to exist)
-        // "Special Forms" are just builtin macros, they have custom AST nodes to do their codegen
-
-        // fn -- custom AST node for codegen
-        // macro -- (directive) macro that expands to ??? (regular invocation, to be delt with in macroexpansion)
-        // let -- how is this going to be implemented? (custom AST node for codegen)
-        // if -- ditto
-        // do -- same
-
-
-        for &name in &SPECIALS {
-            env.insert(name,
-                       // AtomKind::Macro,
-                       Binding::ExternalConst,
-                       root_scope_id,
-                       invalid_source_pos);
-        }
-
-        env.insert("true",
-                   Binding::Const(ConstType::Bool(true)),
-                   root_scope_id,
-                   invalid_source_pos);
-        env.insert("false",
-                   Binding::Const(ConstType::Bool(false)),
-                   root_scope_id,
-                   invalid_source_pos);
-
-        env
-    }
-
-    fn current_scope(&self) -> ScopeId {
-        *self.scope_tracker.last().unwrap()
-    }
-
-    fn insert<T>(&mut self,
-                 symbol: T,
-                 // atom_kind: AtomKind,
-                 binding: Binding,
-                 scope: ScopeId,
-                 pos: Span)
-                 -> Rc<BindingRecord>
-        where T: Into<String>
-    {
-        let symbol = symbol.into();
-        self.forward_decls.insert(symbol.clone());
-        let id = self.next_binding_id();
-        let record = Rc::new(BindingRecord {
-            id: id,
-            pos: pos,
-            symbol: symbol,
-            scope: scope,
-            binding: binding,
-        });
-
-        self.id_table.insert(id, record.clone());
-        record
-    }
-
-    fn next_binding_id(&self) -> BindingId {
-        BindingId::from(self.id_table.len() as u32)
-    }
-}
-
-#[derive(Debug)]
-pub struct BindingRecord {
-    pos: Span,
-    symbol: String,
-    scope: ScopeId,
-    id: BindingId,
-    binding: Binding,
-}
-
-impl BindingRecord {
-    pub fn id(&self) -> BindingId {
-        self.id
-    }
-
-    pub fn symbol(&self) -> &str {
-        &*self.symbol
-    }
-
-    pub fn binding(&self) -> &Binding {
-        &self.binding
-    }
-
-    pub fn scope(&self) -> ScopeId {
-        self.scope
-    }
-}
+// env
 
 #[derive(Clone, Debug)]
 pub enum ConstType {
@@ -382,11 +125,11 @@ pub enum ConstType {
 // (use hello/y) '' 'y' ''
 // (use hello) installs (lazily) 'hello/x' and 'hello/y' into current namespace (Module)
 // (let [x 10] x) 'x' is Local in it's scope (no associated namespace)
-#[derive(Clone, Debug)]
-pub enum Binding {
-    Const(ConstType),
-    ExternalConst,
-}
+// #[derive(Clone, Debug)]
+// pub enum Binding {
+//     Const(ConstType),
+//     ExternalConst,
+// }
 // TopLevel(ConstKind), // member current of namespace
 // Module(ConstKind), // member of external namespace
 // Local(AtomKind), // not member of namespace (e.g. function args)
@@ -414,60 +157,508 @@ macro_rules! def_id {
 def_id!(BindingId, u32);
 def_id!(ScopeId, u32);
 
-impl Debug for Env {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        use print_table::Alignment::Right;
+pub struct MacroEnv;
 
-        let rows = self.id_table
-                       .iter()
-                       .sorted_by(|&(a, _), &(b, _)| a.0.cmp(&b.0))
-                       .into_iter()
-                       .map(|(_, br)| {
-                           vec![br.id().to_string(),
-                                br.symbol.clone(),
-                                format!("{:?}", br.binding()),
-                                br.scope.to_string(),
-                                format!("{:?}", br.pos)]
-                       });
+struct Env;
 
-        writeln!(f,
-                 "{:#?}",
-                 print_table::debug_table("Env",
-                                          vec!["id", "symbol", "kind", "scope", "pos"],
-                                          vec![Right, Right, Right, Right, Right],
-                                          rows))
+pub struct Def(Span, String, Type);
+
+use std::cell::RefCell;
+
+fn new_binding_id() -> usize {
+    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
+    static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+
+    COUNTER.fetch_add(1, Ordering::SeqCst)
+}
+
+#[derive(Debug)]
+struct Binding {
+    name: String,
+    span: Span,
+    type_: Type,
+    id: usize,
+}
+
+#[derive(Debug, Clone,PartialEq)]
+enum Type {
+    I64,
+    Bool,
+    Unit,
+    Fn(Vec<Type>, Box<Type>),
+}
+
+#[derive(Debug, Default)]
+pub struct Scope {
+    parent: Option<Rc<Scope>>,
+    by_name: RefCell<HashMap<String, Rc<Binding>>>,
+    by_id: RefCell<HashMap<usize, Rc<Binding>>>,
+}
+
+impl Scope {
+    fn child_of(parent: Rc<Scope>) -> Rc<Self> {
+        Rc::new(Scope { parent: Some(parent.clone()), ..Default::default() })
+    }
+
+    fn add_binding(&self, name: String, span: Span, btype: Type) {
+        let id = new_binding_id();
+        let binding = Rc::new(Binding {
+            name: name.clone(),
+            span: span,
+            type_: btype,
+            id: id,
+        });
+
+        self.by_name.borrow_mut().insert(name, binding.clone());
+        self.by_id.borrow_mut().insert(id, binding);
+    }
+
+    fn get_binding(&self, id: usize) -> Rc<Binding> {
+        self.by_id.borrow()[&id].clone()
+    }
+
+    fn lookup(&self, name: &str) -> Option<Rc<Binding>> {
+        self.by_name
+            .borrow()
+            .get(name)
+            .cloned()
+            .or_else(|| self.parent.clone().and_then(|parent| parent.lookup(name)))
     }
 }
 
 
+#[derive(Debug)]
+pub enum Ast {
+    EmptyList(usize, Rc<Scope>, Span),
+
+    I64Literal(usize, Rc<Scope>, Span, i64),
+    BoolLiteral(usize, Rc<Scope>, Span, bool),
+
+    Atom(usize, Rc<Scope>, Span, String),
+    Inv(usize, Rc<Scope>, Span, Box<Ast>, Vec<Ast>),
+
+    Do(usize, Rc<Scope>, Span, Vec<Ast>),
+    // params, body
+    Fn(usize, Rc<Scope>, Span, Vec<usize>, Vec<Ast>),
+    // (params, values), body
+    Let(usize, Rc<Scope>, Span, Vec<(usize, String, Ast)>, Vec<Ast>),
+    // condition, then-expr, else-expr
+    If(usize, Rc<Scope>, Span, Box<Ast>, Box<Ast>, Box<Ast>),
+}
+
+impl Ast {
+    fn id(&self) -> usize {
+        match *self {
+            Ast::EmptyList(id, _, _) => id,
+            Ast::I64Literal(id, _, _, _) => id,
+            Ast::BoolLiteral(id, _, _, _) => id,
+            Ast::Atom(id, _, _, _) => id,
+            Ast::Inv(id, _, _, _, _) => id,
+            Ast::Do(id, _, _, _) => id,
+            Ast::Fn(id, _, _, _, _) => id,
+            Ast::Let(id, _, _, _, _) => id,
+            Ast::If(id, _, _, _, _, _) => id,
+        }
+    }
+}
+
+// read: Vec<Sexp>
+// sep_defs: (Vec<Def>, Vec<Sexp>)
+// process_defs(Vec<Def>)
+// sexp_to_ast: Vec<Ast>
+
+pub fn read(text: &str) -> Vec<Sexp> {
+    use read::{self, Env, InputStream};
+
+    let mut env = Default::default();
+    let mut stream = InputStream::new(text.to_string());
+
+    read::read(&mut env, &mut stream).unwrap()
+}
+
+pub fn separate_defs(sexps: Vec<Sexp>) -> Result<(Vec<Def>, Vec<Sexp>)> {
+    let (defs_, non_defs): (Vec<_>, Vec<_>) = sexps.into_iter().partition_map(|sexp| {
+        match sexp {
+            Sexp::List(id, span, mut sexps) => {
+                if if let Some(&Sexp::Atom(id, _, ref name)) = sexps.first() {
+                    name == "def"
+                } else {
+                    false
+                } {
+                    assert_eq!(sexps.len(), 3);
+                    let _def_symbol = sexps.remove(0);
+                    let name = sexps.remove(0);
+                    let rhs = sexps.remove(0);
+                    return Partition::Left((span, name, rhs));
+                } else {
+                    Partition::Right(Sexp::List(id, span, sexps))
+                }
+            }
+            _ => Partition::Right(sexp),
+        }
+    });
+
+    let mut defs = Vec::with_capacity(defs_.len());
+
+    for (span, name_sexp, rhs_sexp) in defs_ {
+        let name = match name_sexp {
+            Sexp::Atom(_, _, string) => string,
+            _ => return Err(format!("First arg of `def` must be a symbol: {:?}", name_sexp).into()),
+        };
+
+        // let type_ = match try!(sexp_to_ast(rhs_sexp)) {
+        //     Ast::BoolLiteral(..) => Type::Bool,
+        //     Ast::I64Literal(..) => Type::I64,
+        //     Ast::EmptyList(..) => Type::Unit,
+        //     _ => unimplemented!(),
+        // };
+
+        let type_ = unimplemented!();
+        defs.push(Def(span, name, type_));
+    }
+
+    Ok((defs, non_defs))
+}
+
+pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) {
+    for Def(span, name, type_) in defs {
+        global_scope.add_binding(name, span, type_)
+    }
+}
+
+// sig?
+pub fn macroexpand(env: &MacroEnv, sexp: Sexp) -> Sexp {
+    unimplemented!()
+}
+
+pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
+    match sexp {
+        Sexp::Atom(id, span, string) => {
+            match string.parse::<i64>() {
+                Ok(val) => Ok(Ast::I64Literal(id, scope.clone(), span, val)),
+                _ => {
+                    if string == "true" {
+                        Ok(Ast::BoolLiteral(id, scope.clone(), span, true))
+                    } else if string == "false" {
+                        Ok(Ast::BoolLiteral(id, scope.clone(), span, false))
+                    } else {
+                        Ok(Ast::Atom(id, scope.clone(), span, string))
+                    }
+                }
+            }
+        }
+        Sexp::List(id, span, mut sexps) => {
+            match sexps.len() {
+                0 => Ok(Ast::EmptyList(id, scope.clone(), span)),
+                _ => {
+                    let first = sexps.remove(0);
+
+                    match first {
+                        Sexp::Atom(_, _, ref s) if s == "ns" => {
+                            // set current ns
+                            // Ok(None)
+                            unimplemented!()
+                        }
+                        Sexp::Atom(_, _, ref s) if s == "use" => {
+                            // import names
+                            // Ok(None)
+                            unimplemented!()
+                        }
+                        Sexp::Atom(_, _, ref s) if s == "if" => {
+                            assert_eq!(sexps.len(), 3);
+
+                            let cond_expr = try!(sexp_to_ast(scope.clone(), sexps.remove(0)));
+                            let then_expr = try!(sexp_to_ast(scope.clone(), sexps.remove(0)));
+                            let else_expr = try!(sexp_to_ast(scope.clone(), sexps.remove(0)));
+
+                            Ok(Ast::If(id,
+                                       scope.clone(),
+                                       span,
+                                       Box::new(cond_expr),
+                                       Box::new(then_expr),
+                                       Box::new(else_expr)))
+                        }
+                        Sexp::Atom(atom_id, _, ref s) if s == "let" => {
+                            assert!(sexps.len() >= 2);
+
+                            let inner_scope = Scope::child_of(scope.clone());
+                            let binding_list_src = match sexps.remove(0) {
+                                Sexp::List(_, _, sexps) => {
+                                    assert!(sexps.len() % 2 == 0);
+
+                                    sexps.into_iter()
+                                         .chunks_lazy(2)
+                                         .into_iter()
+                                         .map(|mut chunk| {
+                                             let (param_id, param_span, param_name) = {
+                                                 match chunk.next().unwrap() {
+                                                     Sexp::Atom(id, span, string) => {
+                                                         (id, span, string)
+                                                     }
+                                                     _ => panic!("param must be Atom"),
+                                                 }
+                                             };
+                                             let value = chunk.next().unwrap();
+
+                                             (param_id, param_span, param_name, value)
+                                         })
+                                         .collect_vec()
+                                }
+                                _ => panic!("First arg of `let` must be a list"),
+                            };
+
+                            let mut binding_list = vec![];
+
+                            for (id, span, name, value_sexp) in binding_list_src {
+                                let value = try!(sexp_to_ast(inner_scope.clone(), value_sexp));
+                                binding_list.push((id, name, value));
+                            }
+
+                            let body_asts = try!(sexps.into_iter()
+                                                      .map(|sexp| {
+                                                          sexp_to_ast(inner_scope.clone(), sexp)
+                                                      })
+                                                      .fold_results(vec![], vec_collector));
+
+                            Ok(Ast::Let(id, scope.clone(), span, binding_list, body_asts))
+                        }
+                        Sexp::Atom(atom_id, _, ref s) if s == "fn" => {
+                            // assert!(sexps.len() >= 2);
+                            // env.push();
+
+                            // let param_list_src = match sexps.remove(0) {
+                            //     Sexp::List(_, sexps) => {
+                            //         sexps.into_iter()
+                            //              .map(|sexp| {
+                            //                  match sexp {
+                            //                      Sexp::Atom(span, string) => (span, string),
+                            //                      _ => panic!("param must be Atom"),
+                            //                  }
+                            //              })
+                            //              .collect_vec()
+                            //     }
+                            //     _ => panic!("First arg of `fn` must be a list"),
+                            // };
+
+                            // let mut param_list = vec![];
+
+                            // for (span, name) in param_list_src {
+                            //     let value = Ast::I64Literal(span, -1);
+                            //     let record = env.add_record_ast(span, name, &value);
+
+                            //     param_list.push(record.id());
+                            // }
+
+                            // let body_asts = try!(sexps_to_asts(env, sexps));
+
+                            // env.pop();
+
+                            // Ok(Ast::Fn(span, param_list, body_asts))
+                            unimplemented!()
+                        }
+                        Sexp::Atom(_, _, ref s) if s == "def" => unreachable!(),
+                        Sexp::Atom(_, _, ref s) if s == "defreader" => unreachable!(),
+                        _ => {
+                            Ok(Ast::Inv(id,
+                                        scope.clone(),
+                                        span,
+                                        Box::new(try!(sexp_to_ast(scope.clone(), first))),
+                                        try!(sexps.into_iter()
+                                                  .map(|sexp| sexp_to_ast(scope.clone(), sexp))
+                                                  .fold_results(vec![], vec_collector))))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn type_of_ast(ast: &Ast) -> Type {
+    match *ast {
+        Ast::EmptyList(..) => Type::Unit,
+        Ast::BoolLiteral(..) => Type::Bool,
+        Ast::I64Literal(..) => Type::I64,
+        _ => unimplemented!(),
+    }
+}
+
+pub fn process_decls(asts: &[Ast]) {
+    for ast in asts {
+        match *ast {
+            Ast::Let(id, ref scope, span, ref bindings, _) => {
+                for &(id, ref string, ref ast) in bindings {
+                    scope.add_binding(string.clone(), span, type_of_ast(ast));
+                }
+            }
+            Ast::Fn(..) => unimplemented!(),
+            _ => {}
+        }
+    }
+}
+
+pub fn type_infer(asts: &[Ast]) {
+    use disjoint_sets::UnionFindNode;
+
+    #[derive(Debug, Clone, PartialEq)]
+    enum TypeTerm {
+        Unknown,
+        Known(Type),
+    }
+
+    type Env = Table<usize, Var>;
+    type Eqs = Vec<(usize, usize)>;
+    type Var = UnionFindNode<TypeTerm>;
+
+    fn fresh() -> Var {
+        UnionFindNode::new(TypeTerm::Unknown)
+    }
+
+    fn known(ty: Type) -> Var {
+        UnionFindNode::new(TypeTerm::Known(ty))
+    }
+
+    fn unify(env: &mut Env, a: usize, b: usize) {
+        assert!(a != b);
+
+        let mut av = env.remove(&a).unwrap();
+        let mut bv = env.remove(&b).unwrap();
+
+        av.union_with(&mut bv, |a, b| {
+            match (a, b) {
+                (TypeTerm::Unknown, b) => b,
+                (a, TypeTerm::Unknown) => a,
+                (a, b) => {
+                    assert_eq!(a, b);
+                    a
+                }
+            }
+        });
+
+        env.insert(a, av);
+        env.insert(b, bv);
+    }
+
+    fn walk(env: &mut Env, eqs: &mut Eqs, ast: &Ast) {
+        match *ast {
+            Ast::Atom(id, ref scope, span, ref string) => {
+                let term = match scope.lookup(&**string) {
+                    Some(binding) => known(binding.type_.clone()),
+                    _ => fresh(),
+                };
+                env.insert(id, term);
+            }
+            Ast::BoolLiteral(id, ref scope, span, val) => {
+                env.insert(id, known(Type::Bool));
+            }
+            Ast::Do(id, ref scope, span, ref children) => {
+                let (last, rest) = children.split_last().unwrap();
+
+                for ast in rest {
+                    walk(env, eqs, ast);
+                }
+
+                walk(env, eqs, last);
+
+                env.insert(id, fresh());
+                unify(env, id, last.id());
+            }
+            Ast::EmptyList(id, ref scope, span) => {
+                env.insert(id, known(Type::Unit));
+            }
+            Ast::Fn(..) => unimplemented!(),
+            Ast::I64Literal(id, ref scope, span, val) => {
+                env.insert(id, known(Type::I64));
+            }
+            Ast::If(..) => unimplemented!(),
+            Ast::Inv(..) => unimplemented!(),
+            Ast::Let(id, ref scope, span, ref bindings, ref body) => {
+                for &(id, ref name, ref ast) in bindings {
+                    walk(env, eqs, ast);
+                    env.insert(id, fresh());
+                    unify(env, id, ast.id());
+                }
+
+                let (last, rest) = body.split_last().unwrap();
+
+                for ast in rest {
+                    walk(env, eqs, ast);
+                }
+
+                walk(env, eqs, last);
+
+                env.insert(id, fresh());
+                unify(env, id, last.id());
+            }
+        }
+    }
+
+    let mut env: Env = Table::new();
+    let mut eqs: Eqs = vec![];
+
+    for ast in asts {
+        walk(&mut env, &mut eqs, ast);
+    }
+
+    println!("{:#?}",
+             env.into_iter()
+                .map(|(k, v)| (k, v.find().clone_data()))
+                .collect::<Table<_, _>>());
+}
+
+fn vec_collector<T>(mut b: Vec<T>, a: T) -> Vec<T> {
+    b.push(a);
+    b
+}
 
 #[cfg(test)]
 mod test {
     use itertools::*;
+    use std::rc::Rc;
 
     use lang;
-    use census;
-    use compile;
+    // use census;
+    // use compile;
+
+    #[test]
+    fn test_new() {
+        let input = "(let (a 1) a)";
+
+        let sexps = lang::read(input);
+        let (defs, sexps) = lang::separate_defs(sexps).unwrap();
+        let global_scope = Rc::new(lang::Scope::default());
+        lang::process_defs(global_scope.clone(), defs);
+        let asts = sexps.into_iter()
+                        .map(|sexp| lang::sexp_to_ast(global_scope.clone(), sexp))
+                        .fold_results(vec![], lang::vec_collector)
+                        .unwrap();
+        lang::process_decls(&*asts);
+        lang::type_infer(&*asts);
+
+
+        println!("{:#?}", asts);
+        panic!();
+    }
 
     macro_rules! test1 {
         ($name:ident, $input:expr, $expected:expr) => {
             #[test]
             fn $name() {
                 
-                let input: &'static str = $input;
-                let expected: &'static str = $expected;
+                // let input: &'static str = $input;
+                // let expected: &'static str = $expected;
                 
-                let sexps = lang::read_in_default_ns_and_env(input);
-                let mut env = lang::Env::new("testing");
-                let asts = census::census(&mut env, sexps).unwrap();
-                println!("{:?}", input);
-                println!("{:#?}", env);
-                println!("{:#?}", asts);
+                // let sexps = lang::read_in_default_ns_and_env(input);
+                // let mut env = lang::Env::new("testing");
+                // let asts = census::census(&mut env, sexps).unwrap();
+                // println!("{:?}", input);
+                // println!("{:#?}", env);
+                // println!("{:#?}", asts);
 
-                assert_eq!(lang::exec(&env, &*asts).unwrap(), expected);
-                // typecheck(&env, &ast).unwrap();
-                //let program = compile::compile(&env, &ast).unwrap();
-                //assert_eq!(program.exec(), expected);
+                // assert_eq!(lang::exec(&env, &*asts).unwrap(), expected);
+                // // typecheck(&env, &ast).unwrap();
+                // //let program = compile::compile(&env, &ast).unwrap();
+                // //assert_eq!(program.exec(), expected);
             }
         }
     }
@@ -488,5 +679,5 @@ mod test {
     test1!(eval_let, "(let (a 4) a)", "4");
     test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
 
-    // test1!(fn_eval, "(fn (a) a)", "");
+    test1!(fn_eval, "(fn (a) a)", "");
 }

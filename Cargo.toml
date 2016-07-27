@@ -13,6 +13,7 @@ name = "aleph"
 doc = false
 
 [dependencies]
+disjoint-sets = "0.3"
 custom_derive = "0.1"
 enum_derive = "0.1"
 byteorder = "0.5"

@@ -9,18 +9,13 @@ use lang::{Env, Ast};
 
 pub fn census(env: &mut Env, mut sexps: Vec<Sexp>) -> Result<Vec<Ast>, Box<Error>> {
     loop {
-        let (unparsed_defs, non_defs) = extract_defs(sexps);
+        let (unparsed_defs, non_defs) = try!(extract_defs(sexps));
         sexps = non_defs;
 
         for UnParsedDef(span, name, rhs) in unparsed_defs {
             try!(def_occurs_check(once(&name).chain(once(&rhs))));
+            env.lazy_add_def(span, name, rhs);
 
-            match name {
-                Sexp::Atom(_, string) => {
-                    env.lazy_add_def(span, string, rhs);
-                }
-                _ => return Err(format!("First arg of `def` must be a symbol: {:?}", name).into()),
-            }
         }
 
         try!(def_occurs_check(sexps.iter()));
@@ -35,9 +30,9 @@ pub fn census(env: &mut Env, mut sexps: Vec<Sexp>) -> Result<Vec<Ast>, Box<Error
     Ok(asts)
 }
 
-struct UnParsedDef(Span, Sexp, Sexp);
+struct UnParsedDef(Span, String, Sexp);
 
-fn extract_defs(sexps: Vec<Sexp>) -> (Vec<UnParsedDef>, Vec<Sexp>) {
+fn extract_defs(sexps: Vec<Sexp>) -> Result<(Vec<UnParsedDef>, Vec<Sexp>), Box<Error>> {
     sexps.into_iter().partition_map(|sexp| {
         match sexp {
             Sexp::List(span, mut sexps) => {
@@ -48,7 +43,13 @@ fn extract_defs(sexps: Vec<Sexp>) -> (Vec<UnParsedDef>, Vec<Sexp>) {
                 } {
                     assert_eq!(sexps.len(), 3);
                     let _def_symbol = sexps.remove(0);
-                    let name = sexps.remove(0);
+                    let name = match sexps.remove(0) {
+                        Sexp::Atom(_, string) => string,
+                        _ => {
+                            return Err(format!("First arg of `def` must be a symbol: {:?}", string)
+                                           .into())
+                        }
+                    };
                     let rhs = sexps.remove(0);
                     return Partition::Left(UnParsedDef(span, name, rhs));
                 } else {
@@ -98,7 +99,7 @@ fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Ast, Box<Error>> {
                     } else if string == "false" {
                         Ok(Ast::BoolLiteral(span, false))
                     } else {
-                        println!("pre-lookup: {:?}", env);
+                        println!("pre-lookup: {:?}: {:?}", string, env);
                         Ok(Ast::Atom(span, env.lookup_by_name(&*string).expect("oh no").id()))
                     }
                 }
@@ -172,6 +173,39 @@ fn sexp_to_ast(env: &mut Env, sexp: Sexp) -> Result<Ast, Box<Error>> {
                             env.pop();
 
                             Ok(Ast::Let(span, binding_list, body_asts))
+                        }
+                        Sexp::Atom(_, ref s) if s == "fn" => {
+                            assert!(sexps.len() >= 2);
+                            env.push();
+
+                            let param_list_src = match sexps.remove(0) {
+                                Sexp::List(_, sexps) => {
+                                    sexps.into_iter()
+                                         .map(|sexp| {
+                                             match sexp {
+                                                 Sexp::Atom(span, string) => (span, string),
+                                                 _ => panic!("param must be Atom"),
+                                             }
+                                         })
+                                         .collect_vec()
+                                }
+                                _ => panic!("First arg of `fn` must be a list"),
+                            };
+
+                            let mut param_list = vec![];
+
+                            for (span, name) in param_list_src {
+                                let value = Ast::I64Literal(span, -1);
+                                let record = env.add_record_ast(span, name, &value);
+
+                                param_list.push(record.id());
+                            }
+
+                            let body_asts = try!(sexps_to_asts(env, sexps));
+
+                            env.pop();
+
+                            Ok(Ast::Fn(span, param_list, body_asts))
                         }
                         Sexp::Atom(_, ref s) if s == "def" => unreachable!(),
                         Sexp::Atom(_, ref s) if s == "defreader" => unreachable!(),
