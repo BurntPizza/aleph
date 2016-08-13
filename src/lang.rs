@@ -4,7 +4,7 @@ use std::rc::Rc;
 use std::error::Error;
 use std::convert::Into;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{self, Display, Debug, Formatter};
 
 use read::{Span, Sexp, InputStream};
 use print_table;
@@ -45,16 +45,6 @@ use print_table;
 
 pub type Table<K, V> = HashMap<K, V>;
 pub type Result<T> = ::std::result::Result<T, Box<Error>>;
-
-fn interpret(ast: &Ast) -> Result<String> {
-    match *ast {
-        Ast::Atom(_, _, _, ref id) => unimplemented!(),
-        Ast::BoolLiteral(_, _, _, val) => unimplemented!(),
-        Ast::Do(_, _, _, ref asts) => unimplemented!(),
-        Ast::EmptyList(_, _, _) => unimplemented!(),
-        _ => unimplemented!(),
-    }
-}
 
 const SPECIALS: [&'static str; 9] = ["let",
                                      "if",
@@ -154,7 +144,7 @@ macro_rules! def_id {
     }
 }
 
-def_id!(BindingId, u32);
+def_id!(BindingId, usize);
 def_id!(ScopeId, u32);
 
 pub struct MacroEnv;
@@ -165,19 +155,20 @@ pub struct Def(Span, String, Type);
 
 use std::cell::RefCell;
 
-fn new_binding_id() -> usize {
+fn new_binding_id() -> BindingId {
     use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
     static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
 
-    COUNTER.fetch_add(1, Ordering::SeqCst)
+    COUNTER.fetch_add(1, Ordering::SeqCst).into()
 }
 
 #[derive(Debug)]
 struct Binding {
     name: String,
     span: Span,
-    type_: Type,
-    id: usize,
+    ast_id: usize,
+    // type_: Type,
+    id: BindingId,
 }
 
 #[derive(Debug, Clone,PartialEq)]
@@ -192,7 +183,7 @@ enum Type {
 pub struct Scope {
     parent: Option<Rc<Scope>>,
     by_name: RefCell<HashMap<String, Rc<Binding>>>,
-    by_id: RefCell<HashMap<usize, Rc<Binding>>>,
+    by_id: RefCell<HashMap<BindingId, Rc<Binding>>>,
 }
 
 impl Scope {
@@ -200,21 +191,18 @@ impl Scope {
         Rc::new(Scope { parent: Some(parent.clone()), ..Default::default() })
     }
 
-    fn add_binding(&self, name: String, span: Span, btype: Type) {
+    fn add_binding(&self, name: String, span: Span, ast_id: usize /* , btype: Type */) {
         let id = new_binding_id();
         let binding = Rc::new(Binding {
             name: name.clone(),
             span: span,
-            type_: btype,
+            ast_id: ast_id,
+            // type_: btype,
             id: id,
         });
 
         self.by_name.borrow_mut().insert(name, binding.clone());
         self.by_id.borrow_mut().insert(id, binding);
-    }
-
-    fn get_binding(&self, id: usize) -> Rc<Binding> {
-        self.by_id.borrow()[&id].clone()
     }
 
     fn lookup(&self, name: &str) -> Option<Rc<Binding>> {
@@ -268,7 +256,7 @@ impl Ast {
 // sexp_to_ast: Vec<Ast>
 
 pub fn read(text: &str) -> Vec<Sexp> {
-    use read::{self, Env, InputStream};
+    use read::{self, InputStream};
 
     let mut env = Default::default();
     let mut stream = InputStream::new(text.to_string());
@@ -280,7 +268,7 @@ pub fn separate_defs(sexps: Vec<Sexp>) -> Result<(Vec<Def>, Vec<Sexp>)> {
     let (defs_, non_defs): (Vec<_>, Vec<_>) = sexps.into_iter().partition_map(|sexp| {
         match sexp {
             Sexp::List(id, span, mut sexps) => {
-                if if let Some(&Sexp::Atom(id, _, ref name)) = sexps.first() {
+                if if let Some(&Sexp::Atom(_, _, ref name)) = sexps.first() {
                     name == "def"
                 } else {
                     false
@@ -321,8 +309,11 @@ pub fn separate_defs(sexps: Vec<Sexp>) -> Result<(Vec<Def>, Vec<Sexp>)> {
 }
 
 pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) {
+    // TODO: type inference for defs?
+
     for Def(span, name, type_) in defs {
-        global_scope.add_binding(name, span, type_)
+        unimplemented!();
+        // global_scope.add_binding(name, span /* type_ */)
     }
 }
 
@@ -474,21 +465,24 @@ pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
     }
 }
 
-fn type_of_ast(ast: &Ast) -> Type {
-    match *ast {
-        Ast::EmptyList(..) => Type::Unit,
-        Ast::BoolLiteral(..) => Type::Bool,
-        Ast::I64Literal(..) => Type::I64,
-        _ => unimplemented!(),
-    }
-}
-
 pub fn process_decls(asts: &[Ast]) {
+
+    // TODO: incorperate decls into type inferrence
+
+    fn type_of_ast(ast: &Ast) -> Type {
+        match *ast {
+            Ast::EmptyList(..) => Type::Unit,
+            Ast::BoolLiteral(..) => Type::Bool,
+            Ast::I64Literal(..) => Type::I64,
+            _ => unimplemented!(),
+        }
+    }
+
     for ast in asts {
         match *ast {
             Ast::Let(id, ref scope, span, ref bindings, _) => {
                 for &(id, ref string, ref ast) in bindings {
-                    scope.add_binding(string.clone(), span, type_of_ast(ast));
+                    scope.add_binding(string.clone(), span, id /* , type_of_ast(ast) */);
                 }
             }
             Ast::Fn(..) => unimplemented!(),
@@ -503,14 +497,14 @@ pub enum TypedAst {
     I64Literal(i64),
     BoolLiteral(bool),
 
-    Atom(Type, Rc<Binding>),
+    Atom(Type, BindingId),
     Inv(Type, Box<TypedAst>, Vec<TypedAst>),
 
     Do(Type, Vec<TypedAst>),
     // params, body
     Fn(Type, Vec<Rc<Binding>>, Vec<TypedAst>),
     // (params, values), body
-    Let(Type, Vec<(Rc<Binding>, TypedAst)>, Vec<TypedAst>),
+    Let(Type, Vec<(BindingId, TypedAst)>, Vec<TypedAst>),
     // condition, then-expr, else-expr
     If(Type, Box<TypedAst>, Box<TypedAst>, Box<TypedAst>),
 }
@@ -540,7 +534,48 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
         Known(Type),
     }
 
-    type Env = Table<usize, Var>;
+    // type Env = Table<usize, Var>;
+    struct Env {
+        id_to_var: Table<usize, Var>,
+        string_to_id: Table<String, usize>,
+    }
+
+    impl Env {
+        fn new() -> Self {
+            Env {
+                id_to_var: Table::new(),
+                string_to_id: Table::new(),
+            }
+        }
+
+        fn get(&self, id: usize) -> &Var {
+            &self.id_to_var[&id]
+        }
+
+        fn insert(&mut self, id: usize, var: Var) {
+            self.id_to_var.insert(id, var);
+        }
+
+        fn remove(&mut self, id: usize) -> Var {
+            self.id_to_var.remove(&id).unwrap()
+        }
+
+        fn map_values<F>(&mut self, a: usize, b: usize, f: F)
+            where F: Fn(Var, Var) -> (Var, Var)
+        {
+            assert!(a != b);
+            let a_var = self.remove(a);
+            let b_var = self.remove(b);
+            let (a_var, b_var) = f(a_var, b_var);
+            self.insert(a, a_var);
+            self.insert(b, b_var);
+        }
+
+        fn lookup_type(&self, id: usize) -> Type {
+            self.get(id).find().with_data(unwrap_term)
+        }
+    }
+
     type Eqs = Vec<(usize, usize)>;
     type Var = UnionFindNode<TypeTerm>;
 
@@ -553,24 +588,19 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
     }
 
     fn unify(env: &mut Env, a: usize, b: usize) {
-        assert!(a != b);
-
-        let mut av = env.remove(&a).unwrap();
-        let mut bv = env.remove(&b).unwrap();
-
-        av.union_with(&mut bv, |a, b| {
-            match (a, b) {
-                (TypeTerm::Unknown, b) => b,
-                (a, TypeTerm::Unknown) => a,
-                (a, b) => {
-                    assert_eq!(a, b);
-                    a
+        env.map_values(a, b, |mut av, mut bv| {
+            av.union_with(&mut bv, |a, b| {
+                match (a, b) {
+                    (TypeTerm::Unknown, b) => b,
+                    (a, TypeTerm::Unknown) => a,
+                    (a, b) => {
+                        assert_eq!(a, b);
+                        a
+                    }
                 }
-            }
+            });
+            (av, bv)
         });
-
-        env.insert(a, av);
-        env.insert(b, bv);
     }
 
     fn unwrap_term(term: &mut TypeTerm) -> Type {
@@ -584,9 +614,10 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
         match *ast {
             Ast::Atom(id, ref scope, span, ref string) => {
                 let term = match scope.lookup(&**string) {
-                    Some(binding) => known(binding.type_.clone()),
+                    Some(binding) => known(env.lookup_type(binding.ast_id)),
                     _ => fresh(),
                 };
+
                 env.insert(id, term);
             }
             Ast::BoolLiteral(id, ref scope, span, val) => {
@@ -616,10 +647,11 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
             Ast::Let(id, ref scope, span, ref bindings, ref body) => {
                 for &(id, ref name, ref ast) in bindings {
                     walk(env, ast);
+
                     env.insert(id, fresh());
                     unify(env, id, ast.id());
                 }
-
+                // need to unify params with occurances of params
                 let (last, rest) = body.split_last().unwrap();
 
                 for ast in rest {
@@ -636,13 +668,12 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
 
     fn to_typed(env: &Env, ast: Ast) -> TypedAst {
         match ast {
-            Ast::Atom(id, scope, span, string) => {
-                TypedAst::Atom(env[&id].find().with_data(unwrap_term),
-                               scope.lookup(&*string).unwrap())
+            Ast::Atom(id, scope, _, string) => {
+                TypedAst::Atom(env.lookup_type(id), scope.lookup(&*string).unwrap().id)
             }
             Ast::BoolLiteral(_, _, _, val) => TypedAst::BoolLiteral(val),
-            Ast::Do(id, scope, span, children) => {
-                TypedAst::Do(env[&id].find().with_data(unwrap_term),
+            Ast::Do(id, _, _, children) => {
+                TypedAst::Do(env.lookup_type(id),
                              children.into_iter().map(|ast| to_typed(env, ast)).collect())
             }
             Ast::EmptyList(..) => TypedAst::EmptyList,
@@ -650,11 +681,11 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
             Ast::I64Literal(_, _, _, val) => TypedAst::I64Literal(val),
             Ast::If(..) => unimplemented!(),
             Ast::Inv(..) => unimplemented!(),
-            Ast::Let(id, scope, span, bindings, body) => {
-                TypedAst::Let(env[&id].find().with_data(unwrap_term),
+            Ast::Let(id, scope, _, bindings, body) => {
+                TypedAst::Let(env.lookup_type(id),
                               bindings.into_iter()
-                                      .map(|(id, string, ast)| {
-                                          (scope.lookup(&*string).unwrap(), to_typed(env, ast))
+                                      .map(|(_, string, ast)| {
+                                          (scope.lookup(&*string).unwrap().id, to_typed(env, ast))
                                       })
                                       .collect(),
                               body.into_iter().map(|ast| to_typed(env, ast)).collect())
@@ -662,13 +693,93 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
         }
     }
 
-    let mut env: Env = Table::new();
+    let mut env: Env = Env::new();
 
     for ast in &asts {
         walk(&mut env, ast);
     }
 
     asts.into_iter().map(|ast| to_typed(&env, ast)).collect()
+}
+
+
+pub fn interpret(asts: &[TypedAst]) -> Box<Display> {
+
+    #[derive(Clone, Debug)]
+    enum Value {
+        I64(i64),
+        Bool(bool),
+    }
+
+    impl Display for Value {
+        fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+            match *self {
+                Value::I64(val) => write!(f, "{}", val),
+                Value::Bool(val) => write!(f, "{}", val),
+            }
+        }
+    }
+
+    type Env = Table<BindingId, Value>;
+
+
+    // #[derive(Debug)]
+    // pub enum TypedAst {
+    //     EmptyList,
+    //     I64Literal(i64),
+    //     BoolLiteral(bool),
+
+    //     Atom(Type, BindingId),
+    //     Inv(Type, Box<TypedAst>, Vec<TypedAst>),
+
+    //     Do(Type, Vec<TypedAst>),
+    //     // params, body
+    //     Fn(Type, Vec<Rc<Binding>>, Vec<TypedAst>),
+    //     // (params, values), body
+    //     Let(Type, Vec<(BindingId, TypedAst)>, Vec<TypedAst>),
+    //     // condition, then-expr, else-expr
+    //     If(Type, Box<TypedAst>, Box<TypedAst>, Box<TypedAst>),
+    // }
+
+
+    fn interpret_(env: &Env, ast: &TypedAst) -> Value {
+        match *ast {
+            TypedAst::Atom(_, id) => env[&id].clone(),
+            TypedAst::BoolLiteral(val) => Value::Bool(val),
+            TypedAst::Do(..) => unimplemented!(),
+            TypedAst::EmptyList => unimplemented!(),
+            TypedAst::Fn(..) => unimplemented!(),
+            TypedAst::I64Literal(val) => Value::I64(val),
+            TypedAst::If(..) => unimplemented!(),
+            TypedAst::Inv(..) => unimplemented!(),
+            TypedAst::Let(_, ref bindings, ref body) => {
+                let mut env = env.clone();
+
+                for &(id, ref ast) in bindings {
+                    let val = interpret_(&env, &ast);
+                    env.insert(id, val);
+                }
+
+                let (last, rest) = body.split_last().unwrap();
+
+                for ast in rest {
+                    interpret_(&env, ast);
+                }
+
+                interpret_(&env, last)
+            }
+        }
+    }
+
+    let env = Table::new();
+
+    let (last, rest) = asts.split_last().unwrap();
+
+    for ast in rest {
+        interpret_(&env, ast);
+    }
+
+    Box::new(interpret_(&env, last))
 }
 
 fn vec_collector<T>(mut b: Vec<T>, a: T) -> Vec<T> {
@@ -685,26 +796,6 @@ mod test {
     // use census;
     // use compile;
 
-    #[test]
-    fn test_new() {
-        let input = "(let (a 1) a)";
-
-        let sexps = lang::read(input);
-        let (defs, sexps) = lang::separate_defs(sexps).unwrap();
-        let global_scope = Rc::new(lang::Scope::default());
-        lang::process_defs(global_scope.clone(), defs);
-        let asts = sexps.into_iter()
-                        .map(|sexp| lang::sexp_to_ast(global_scope.clone(), sexp))
-                        .fold_results(vec![], lang::vec_collector)
-                        .unwrap();
-        lang::process_decls(&*asts);
-        let typed_asts = lang::type_infer(asts);
-
-
-        println!("{:#?}", typed_asts);
-        panic!();
-    }
-
     macro_rules! test1 {
         ($name:ident, $input:expr, $expected:expr) => {
             #[test]
@@ -713,35 +804,39 @@ mod test {
                 let input: &'static str = $input;
                 let expected: &'static str = $expected;
                 
-                let sexps = lang::read_in_default_ns_and_env(input);
-                let mut env = lang::Env::new("testing");
-                let asts = census::census(&mut env, sexps).unwrap();
-                println!("{:?}", input);
-                println!("{:#?}", env);
-                println!("{:#?}", asts);
+                let sexps = lang::read(input);
+                let (defs, sexps) = lang::separate_defs(sexps).unwrap();
+                let global_scope = Rc::new(lang::Scope::default());
+                lang::process_defs(global_scope.clone(), defs);
+                let asts = sexps.into_iter()
+                    .map(|sexp| lang::sexp_to_ast(global_scope.clone(), sexp))
+                    .fold_results(vec![], lang::vec_collector)
+                    .unwrap();
+                lang::process_decls(&*asts);
+                let typed_asts = lang::type_infer(asts);
 
-                assert_eq!(lang::exec(&env, &*asts).unwrap(), expected);
-                // typecheck(&env, &ast).unwrap();
-                //let program = compile::compile(&env, &ast).unwrap();
-                //assert_eq!(program.exec(), expected);
+                println!("{:#?}", typed_asts);
+                let result = lang::interpret(&*typed_asts).to_string();
+                
+                assert_eq!(expected, result);
             }
         }
     }
 
-    // test1!(eval_i64, "10", "10");
+    test1!(eval_i64, "10", "10");
     // test1!(def_i64, "(def x 10) x", "10");
     // test1!(forward_def_i64, "x (def x 10)", "10");
     // test1!(alias_i64, "(def x 10) (def y x) y", "10");
     // test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
 
-    // test1!(eval_boolean_t, "true", "true");
-    // test1!(eval_boolean_f, "false", "false");
+    test1!(eval_boolean_t, "true", "true");
+    test1!(eval_boolean_f, "false", "false");
 
     // test1!(eval_if_t, "(if true 0 1)", "0");
     // test1!(eval_if_f, "(if false 0 1)", "1");
     // test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
 
-    // test1!(eval_let, "(let (a 4) a)", "4");
+    test1!(eval_let, "(let (a 4) a)", "4");
     // test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
 
     // test1!(fn_eval, "(fn (a) a)", "");
