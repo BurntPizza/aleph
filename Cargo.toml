@@ -13,6 +13,7 @@ name = "aleph"
 doc = false
 
 [dependencies]
+petgraph = "0.2"
 disjoint-sets = "0.3"
 custom_derive = "0.1"
 enum_derive = "0.1"

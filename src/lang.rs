@@ -1,14 +1,15 @@
 
 use itertools::*;
+use petgraph;
 
 use std::rc::Rc;
 use std::error::Error;
 use std::convert::Into;
-use std::collections::{HashMap, HashSet, VecDeque};
-use std::fmt::{self, Display, Debug, Formatter};
+use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter};
 
-use read::{Span, Sexp, InputStream};
-use print_table;
+use read::{Span, Sexp};
+// use print_table;
 
 
 // (syntactic) Forms:
@@ -148,8 +149,6 @@ macro_rules! def_id {
 def_id!(BindingId, usize);
 def_id!(ScopeId, u32);
 
-pub struct MacroEnv;
-
 pub struct Def(Span, String, Sexp);
 
 use std::cell::RefCell;
@@ -210,6 +209,10 @@ impl Scope {
         id
     }
 
+    fn get(&self, id: BindingId) -> Rc<Binding> {
+        self.by_id.borrow()[&id].clone()
+    }
+
     fn lookup(&self, name: &str) -> Option<Rc<Binding>> {
         self.by_name
             .borrow()
@@ -220,7 +223,7 @@ impl Scope {
 }
 
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Ast {
     EmptyList(usize, Rc<Scope>, Span),
 
@@ -254,11 +257,6 @@ impl Ast {
         }
     }
 }
-
-// read: Vec<Sexp>
-// sep_defs: (Vec<Def>, Vec<Sexp>)
-// process_defs(Vec<Def>)
-// sexp_to_ast: Vec<Ast>
 
 pub fn read(text: &str) -> Vec<Sexp> {
     use read::{self, InputStream};
@@ -306,10 +304,23 @@ pub fn separate_defs(sexps: Vec<Sexp>) -> Result<(Vec<Def>, Vec<Sexp>)> {
 }
 
 pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<BindingId, TypedAst>) {
-    let mut env = Env::new();
+    use petgraph::Graph;
 
-    let mut asts = vec![];
-    let mut binding_ids = vec![];
+    fn get_deps(ast: &Ast) -> Vec<BindingId> {
+        match *ast {
+            Ast::Atom(_, ref scope, _, ref string) => {
+                vec![scope.lookup(&**string).expect("oops").id]
+            }
+            Ast::BoolLiteral(..) |
+            Ast::EmptyList(..) |
+            Ast::I64Literal(..) => vec![],
+            _ => panic!("unimpl: {:?}", ast),
+        }
+    }
+
+    let mut env = Env::new();
+    let mut binding_id_to_node_idx = Table::new();
+    let mut def_graph = Graph::<_, ()>::new();
 
     for Def(span, name, sexp) in defs {
         let ast = sexp_to_ast(global_scope.clone(), sexp).unwrap();
@@ -319,26 +330,36 @@ pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<Bind
             _ => unimplemented!(),
         };
 
-        asts.push(ast);
-
         let binding_id = global_scope.add_binding(name.clone(), span, id);
-        binding_ids.push(binding_id);
+        let node_idx = def_graph.add_node((binding_id, ast));
+
+        binding_id_to_node_idx.insert(binding_id, node_idx);
         env.insert(id, Var::new(ty));
     }
 
+    for idx in def_graph.node_indices() {
+        for id in get_deps(&def_graph[idx].1) {
+            let dep_idx = binding_id_to_node_idx[&id];
+            def_graph.add_edge(idx, dep_idx, ());
+        }
+    }
+
+    for scc in petgraph::algo::scc(&def_graph) {
+        if scc.len() > 1 {
+            // TODO: get minimal cycles?
+            // scc may contain multiple cycles if they share nodes
+            panic!("Circular dependency: {:?}",
+                   scc.into_iter()
+                      .map(|idx| global_scope.get(def_graph[idx].0).name.clone())
+                      .collect_vec());
+        }
+    }
+
+    let (nodes, _) = def_graph.into_nodes_edges();
+    let (ids, asts): (Vec<_>, _) = nodes.into_iter().map(|node| node.weight).unzip();
     let asts = type_infer(&mut env, asts);
 
-    let consts = asts.into_iter()
-                     .enumerate()
-                     .map(|(idx, ast)| (binding_ids[idx], ast))
-                     .collect();
-
-    (env, consts)
-}
-
-// sig?
-pub fn macroexpand(env: &MacroEnv, sexp: Sexp) -> Sexp {
-    unimplemented!()
+    (env, ids.into_iter().zip(asts).collect())
 }
 
 pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
@@ -666,7 +687,7 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
                     env.insert(id, fresh());
                     unify(env, id, ast.id());
                 }
-                // need to unify params with occurances of params
+
                 let (last, rest) = body.split_last().unwrap();
 
                 for ast in rest {
@@ -815,9 +836,12 @@ mod test {
 
     macro_rules! test1 {
         ($name:ident, $input:expr, $expected:expr) => {
+            test1!($name, $input, $expected,);
+        };
+        ($name:ident, $input:expr, $expected:expr, $($extra:meta),*) => {
             #[test]
-            fn $name() {
-                
+            $(#[$extra])*
+            fn $name() {                
                 let input: &'static str = $input;
                 let expected: &'static str = $expected;
                 
@@ -846,17 +870,21 @@ mod test {
     test1!(eval_i64, "10", "10");
     test1!(def_i64, "(def x 10) x", "10");
     test1!(forward_def_i64, "x (def x 10)", "10");
-    // test1!(alias_i64, "(def x 10) (def y x) y", "10");
-    // test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
-
     test1!(eval_boolean_t, "true", "true");
     test1!(eval_boolean_f, "false", "false");
+    test1!(eval_let, "(let (a 4) a)", "4");
 
+    test1!(circular_dep,
+           "(def x y) (def y z) (def z x)",
+           "",
+           should_panic(expected = "Circular dependency: [\"x\", \"y\", \"z\"]"));
+
+    // test1!(alias_i64, "(def x 10) (def y x) y", "10");
+    // test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
     // test1!(eval_if_t, "(if true 0 1)", "0");
     // test1!(eval_if_f, "(if false 0 1)", "1");
     // test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
 
-    test1!(eval_let, "(let (a 4) a)", "4");
     // test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
 
     // test1!(fn_eval, "(fn (a) a)", "");
