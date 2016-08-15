@@ -1,3 +1,4 @@
+
 use itertools::*;
 
 use std::rc::Rc;
@@ -149,9 +150,7 @@ def_id!(ScopeId, u32);
 
 pub struct MacroEnv;
 
-struct Env;
-
-pub struct Def(Span, String, Type);
+pub struct Def(Span, String, Sexp);
 
 use std::cell::RefCell;
 
@@ -191,7 +190,11 @@ impl Scope {
         Rc::new(Scope { parent: Some(parent.clone()), ..Default::default() })
     }
 
-    fn add_binding(&self, name: String, span: Span, ast_id: usize /* , btype: Type */) {
+    fn add_binding(&self,
+                   name: String,
+                   span: Span,
+                   ast_id: usize /* , btype: Type */)
+                   -> BindingId {
         let id = new_binding_id();
         let binding = Rc::new(Binding {
             name: name.clone(),
@@ -203,6 +206,8 @@ impl Scope {
 
         self.by_name.borrow_mut().insert(name, binding.clone());
         self.by_id.borrow_mut().insert(id, binding);
+
+        id
     }
 
     fn lookup(&self, name: &str) -> Option<Rc<Binding>> {
@@ -294,27 +299,41 @@ pub fn separate_defs(sexps: Vec<Sexp>) -> Result<(Vec<Def>, Vec<Sexp>)> {
             _ => return Err(format!("First arg of `def` must be a symbol: {:?}", name_sexp).into()),
         };
 
-        // let type_ = match try!(sexp_to_ast(rhs_sexp)) {
-        //     Ast::BoolLiteral(..) => Type::Bool,
-        //     Ast::I64Literal(..) => Type::I64,
-        //     Ast::EmptyList(..) => Type::Unit,
-        //     _ => unimplemented!(),
-        // };
-
-        let type_ = unimplemented!();
-        defs.push(Def(span, name, type_));
+        defs.push(Def(span, name, rhs_sexp));
     }
 
     Ok((defs, non_defs))
 }
 
-pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) {
-    // TODO: type inference for defs?
+pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<BindingId, TypedAst>) {
+    let mut env = Env::new();
 
-    for Def(span, name, type_) in defs {
-        unimplemented!();
-        // global_scope.add_binding(name, span /* type_ */)
+    let mut asts = vec![];
+    let mut binding_ids = vec![];
+
+    for Def(span, name, sexp) in defs {
+        let ast = sexp_to_ast(global_scope.clone(), sexp).unwrap();
+        let (id, ty) = match ast {
+            Ast::I64Literal(id, _, _, _) => (id, TypeTerm::Known(Type::I64)),
+            Ast::Atom(id, _, _, _) => (id, TypeTerm::Unknown),
+            _ => unimplemented!(),
+        };
+
+        asts.push(ast);
+
+        let binding_id = global_scope.add_binding(name.clone(), span, id);
+        binding_ids.push(binding_id);
+        env.insert(id, Var::new(ty));
     }
+
+    let asts = type_infer(&mut env, asts);
+
+    let consts = asts.into_iter()
+                     .enumerate()
+                     .map(|(idx, ast)| (binding_ids[idx], ast))
+                     .collect();
+
+    (env, consts)
 }
 
 // sig?
@@ -513,8 +532,8 @@ impl TypedAst {
     fn get_type(&self) -> Type {
         match *self {
             TypedAst::EmptyList => Type::Unit,
-            TypedAst::I64Literal(i64) => Type::I64,
-            TypedAst::BoolLiteral(bool) => Type::Bool,
+            TypedAst::I64Literal(_) => Type::I64,
+            TypedAst::BoolLiteral(_) => Type::Bool,
             TypedAst::Atom(ref ty, _) => ty.clone(),
             TypedAst::Inv(ref ty, _, _) => ty.clone(),
             TypedAst::Do(ref ty, _) => ty.clone(),
@@ -525,59 +544,62 @@ impl TypedAst {
     }
 }
 
-pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
-    use disjoint_sets::UnionFindNode;
+use disjoint_sets::UnionFindNode;
 
-    #[derive(Debug, Clone, PartialEq)]
-    enum TypeTerm {
-        Unknown,
-        Known(Type),
-    }
+#[derive(Debug, Clone, PartialEq)]
+enum TypeTerm {
+    Unknown,
+    Known(Type),
+}
 
-    // type Env = Table<usize, Var>;
-    struct Env {
-        id_to_var: Table<usize, Var>,
-        string_to_id: Table<String, usize>,
-    }
+type Var = UnionFindNode<TypeTerm>;
 
-    impl Env {
-        fn new() -> Self {
-            Env {
-                id_to_var: Table::new(),
-                string_to_id: Table::new(),
-            }
-        }
+#[derive(Debug)]
+pub struct Env {
+    id_to_var: Table<usize, Var>,
+    string_to_id: Table<String, usize>,
+}
 
-        fn get(&self, id: usize) -> &Var {
-            &self.id_to_var[&id]
-        }
-
-        fn insert(&mut self, id: usize, var: Var) {
-            self.id_to_var.insert(id, var);
-        }
-
-        fn remove(&mut self, id: usize) -> Var {
-            self.id_to_var.remove(&id).unwrap()
-        }
-
-        fn map_values<F>(&mut self, a: usize, b: usize, f: F)
-            where F: Fn(Var, Var) -> (Var, Var)
-        {
-            assert!(a != b);
-            let a_var = self.remove(a);
-            let b_var = self.remove(b);
-            let (a_var, b_var) = f(a_var, b_var);
-            self.insert(a, a_var);
-            self.insert(b, b_var);
-        }
-
-        fn lookup_type(&self, id: usize) -> Type {
-            self.get(id).find().with_data(unwrap_term)
+impl Env {
+    fn new() -> Self {
+        Env {
+            id_to_var: Table::new(),
+            string_to_id: Table::new(),
         }
     }
 
-    type Eqs = Vec<(usize, usize)>;
-    type Var = UnionFindNode<TypeTerm>;
+    fn get(&self, id: usize) -> &Var {
+        &self.id_to_var[&id]
+    }
+
+    fn insert(&mut self, id: usize, var: Var) {
+        self.id_to_var.insert(id, var);
+    }
+
+    fn remove(&mut self, id: usize) -> Var {
+        self.id_to_var.remove(&id).unwrap()
+    }
+
+    fn map_values<F>(&mut self, a: usize, b: usize, f: F)
+        where F: Fn(Var, Var) -> (Var, Var)
+    {
+        assert!(a != b);
+        let a_var = self.remove(a);
+        let b_var = self.remove(b);
+        let (a_var, b_var) = f(a_var, b_var);
+        self.insert(a, a_var);
+        self.insert(b, b_var);
+    }
+
+    fn lookup_type(&self, id: usize) -> Type {
+        self.get(id).find().with_data(|term| match *term {
+            TypeTerm::Known(ref ty) => ty.clone(),
+            _ => panic!("Type could not be inferred"),
+        })
+    }
+}
+
+pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
 
     fn fresh() -> Var {
         UnionFindNode::new(TypeTerm::Unknown)
@@ -601,13 +623,6 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
             });
             (av, bv)
         });
-    }
-
-    fn unwrap_term(term: &mut TypeTerm) -> Type {
-        match *term {
-            TypeTerm::Known(ref ty) => ty.clone(),
-            _ => panic!("Type could not be inferred"),
-        }
     }
 
     fn walk(env: &mut Env, ast: &Ast) {
@@ -693,17 +708,15 @@ pub fn type_infer(asts: Vec<Ast>) -> Vec<TypedAst> {
         }
     }
 
-    let mut env: Env = Env::new();
-
     for ast in &asts {
-        walk(&mut env, ast);
+        walk(env, ast);
     }
 
-    asts.into_iter().map(|ast| to_typed(&env, ast)).collect()
+    asts.into_iter().map(|ast| to_typed(env, ast)).collect()
 }
 
 
-pub fn interpret(asts: &[TypedAst]) -> Box<Display> {
+pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Box<Display> {
 
     #[derive(Clone, Debug)]
     enum Value {
@@ -771,7 +784,11 @@ pub fn interpret(asts: &[TypedAst]) -> Box<Display> {
         }
     }
 
-    let env = Table::new();
+    let init_env = Env::new();
+
+    let env = consts.into_iter()
+                    .map(|(&id, ast)| (id, interpret_(&init_env, &ast)))
+                    .collect();
 
     let (last, rest) = asts.split_last().unwrap();
 
@@ -807,16 +824,19 @@ mod test {
                 let sexps = lang::read(input);
                 let (defs, sexps) = lang::separate_defs(sexps).unwrap();
                 let global_scope = Rc::new(lang::Scope::default());
-                lang::process_defs(global_scope.clone(), defs);
+                let (mut type_env, consts) = lang::process_defs(global_scope.clone(), defs);
                 let asts = sexps.into_iter()
                     .map(|sexp| lang::sexp_to_ast(global_scope.clone(), sexp))
                     .fold_results(vec![], lang::vec_collector)
                     .unwrap();
-                lang::process_decls(&*asts);
-                let typed_asts = lang::type_infer(asts);
 
+                lang::process_decls(&*asts);
+
+                let typed_asts = lang::type_infer(&mut type_env, asts);
+
+                println!("{:#?}", type_env);
                 println!("{:#?}", typed_asts);
-                let result = lang::interpret(&*typed_asts).to_string();
+                let result = lang::interpret(&consts, &*typed_asts).to_string();
                 
                 assert_eq!(expected, result);
             }
@@ -824,8 +844,8 @@ mod test {
     }
 
     test1!(eval_i64, "10", "10");
-    // test1!(def_i64, "(def x 10) x", "10");
-    // test1!(forward_def_i64, "x (def x 10)", "10");
+    test1!(def_i64, "(def x 10) x", "10");
+    test1!(forward_def_i64, "x (def x 10)", "10");
     // test1!(alias_i64, "(def x 10) (def y x) y", "10");
     // test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
 
