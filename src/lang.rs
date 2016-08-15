@@ -737,6 +737,8 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
 
 pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Box<Display> {
 
+    use std::collections::VecDeque;
+
     #[derive(Clone, Debug)]
     enum Value {
         I64(i64),
@@ -751,9 +753,6 @@ pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Box<
             }
         }
     }
-
-    type Env = Table<BindingId, Value>;
-
 
     // #[derive(Debug)]
     // pub enum TypedAst {
@@ -774,7 +773,7 @@ pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Box<
     // }
 
 
-    fn interpret_(env: &Env, ast: &TypedAst) -> Value {
+    fn interpret_(env: &Table<BindingId, Value>, ast: &TypedAst) -> Value {
         match *ast {
             TypedAst::Atom(_, id) => env[&id].clone(),
             TypedAst::BoolLiteral(val) => Value::Bool(val),
@@ -803,11 +802,27 @@ pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Box<
         }
     }
 
-    let init_env = Env::new();
+    let mut env = Table::new();
+    println!("{:#?}", consts);
 
-    let env = consts.into_iter()
-                    .map(|(&id, ast)| (id, interpret_(&init_env, &ast)))
-                    .collect();
+    let mut open_set = consts.into_iter().collect::<VecDeque<_>>();
+
+    while let Some((id, elem)) = open_set.pop_front() {
+        match *elem {
+            TypedAst::Atom(_, inner_id) => {
+                if env.contains_key(&inner_id) {
+                    let val = interpret_(&env, elem);
+                    env.insert(*id, val);
+                } else {
+                    open_set.push_back((id, elem));
+                }
+            }
+            _ => {
+                let val = interpret_(&env, elem);
+                env.insert(*id, val);
+            }
+        }
+    }
 
     let (last, rest) = asts.split_last().unwrap();
 
@@ -871,19 +886,18 @@ mod test {
     test1!(eval_boolean_t, "true", "true");
     test1!(eval_boolean_f, "false", "false");
     test1!(eval_let, "(let (a 4) a)", "4");
+    test1!(alias_i64, "(def x 10) (def y x) y", "10");
+    test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
+    test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
 
     test1!(circular_dep,
            "(def x y) (def y z) (def z x)",
            "",
            should_panic(expected = "Circular dependency: [\"x\", \"y\", \"z\"]"));
 
-    // test1!(alias_i64, "(def x 10) (def y x) y", "10");
-    // test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
     // test1!(eval_if_t, "(if true 0 1)", "0");
     // test1!(eval_if_f, "(if false 0 1)", "1");
     // test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
-
-    // test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
 
     // test1!(fn_eval, "(fn (a) a)", "");
 }
