@@ -346,8 +346,6 @@ pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<Bind
 
     for scc in petgraph::algo::scc(&def_graph) {
         if scc.len() > 1 {
-            // TODO: get minimal cycles?
-            // scc may contain multiple cycles if they share nodes
             panic!("Circular dependency: {:?}",
                    scc.into_iter()
                       .map(|idx| global_scope.get(def_graph[idx].0).name.clone())
