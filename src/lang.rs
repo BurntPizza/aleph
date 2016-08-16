@@ -8,7 +8,7 @@ use std::convert::Into;
 use std::collections::HashMap;
 use std::fmt::{self, Display, Formatter};
 
-use read::{Span, Sexp};
+use read::{self, Span, Sexp};
 // use print_table;
 
 
@@ -169,12 +169,25 @@ struct Binding {
     id: BindingId,
 }
 
-#[derive(Debug, Clone,PartialEq)]
+#[derive(Hash, Eq, Debug, Clone, PartialEq)]
 enum Type {
     I64,
     Bool,
     Unit,
     Fn(Vec<Type>, Box<Type>),
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f,
+               "{}",
+               match *self {
+                   Type::Bool => "Bool",
+                   Type::I64 => "I64",
+                   Type::Unit => "()",
+                   _ => unimplemented!(),
+               })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -326,6 +339,7 @@ pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<Bind
         let ast = sexp_to_ast(global_scope.clone(), sexp).unwrap();
         let (id, ty) = match ast {
             Ast::I64Literal(id, _, _, _) => (id, TypeTerm::Known(Type::I64)),
+            Ast::BoolLiteral(id, _, _, _) => (id, TypeTerm::Known(Type::Bool)),
             Ast::Atom(id, _, _, _) => (id, TypeTerm::Unknown),
             _ => unimplemented!(),
         };
@@ -634,9 +648,11 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
                 match (a, b) {
                     (TypeTerm::Unknown, b) => b,
                     (a, TypeTerm::Unknown) => a,
-                    (a, b) => {
-                        assert_eq!(a, b);
-                        a
+                    (TypeTerm::Known(a), TypeTerm::Known(b)) => {
+                        if a != b {
+                            panic!("Mismatched types: {} and {}", a, b);
+                        }
+                        TypeTerm::Known(a)
                     }
                 }
             });
@@ -644,9 +660,30 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
         });
     }
 
+    fn unify_with_root(env: &mut Env, a: usize, b: Type) {
+        fn roots() -> Table<Type, usize> {
+            let mut roots = Table::new();
+
+            roots.insert(Type::Unit, read::new_node_id());
+            roots.insert(Type::Bool, read::new_node_id());
+            roots.insert(Type::I64, read::new_node_id());
+
+            roots
+        }
+
+        lazy_static! {
+            static ref ROOTS: Table<Type, usize> = roots();
+        }
+
+        let root = ROOTS[&b];
+        env.insert(root, known(b));
+        unify(env, a, root);
+        env.remove(root);
+    }
+
     fn walk(env: &mut Env, ast: &Ast) {
         match *ast {
-            Ast::Atom(id, ref scope, span, ref string) => {
+            Ast::Atom(id, ref scope, _span, ref string) => {
                 let term = match scope.lookup(&**string) {
                     Some(binding) => known(env.lookup_type(binding.ast_id)),
                     _ => fresh(),
@@ -654,10 +691,10 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
 
                 env.insert(id, term);
             }
-            Ast::BoolLiteral(id, ref scope, span, val) => {
+            Ast::BoolLiteral(id, ref _scope, _span, _val) => {
                 env.insert(id, known(Type::Bool));
             }
-            Ast::Do(id, ref scope, span, ref children) => {
+            Ast::Do(id, ref _scope, _span, ref children) => {
                 let (last, rest) = children.split_last().unwrap();
 
                 for ast in rest {
@@ -669,17 +706,38 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
                 env.insert(id, fresh());
                 unify(env, id, last.id());
             }
-            Ast::EmptyList(id, ref scope, span) => {
+            Ast::EmptyList(id, ref _scope, _span) => {
                 env.insert(id, known(Type::Unit));
             }
             Ast::Fn(..) => unimplemented!(),
-            Ast::I64Literal(id, ref scope, span, val) => {
+            Ast::I64Literal(id, ref _scope, _span, _val) => {
                 env.insert(id, known(Type::I64));
             }
-            Ast::If(..) => unimplemented!(),
+            Ast::If(id, ref _scope, _span, ref cond_ast, ref then_ast, ref else_ast) => {
+                walk(env, cond_ast);
+
+                if env.lookup_type(cond_ast.id()) != Type::Bool {
+                    panic!("Condition of `if` expression must be of type Bool");
+                }
+
+                // unify_with_root(env, cond_ast.id(), Type::Bool);
+
+                walk(env, then_ast);
+                walk(env, else_ast);
+
+                if env.lookup_type(then_ast.id()) != env.lookup_type(else_ast.id()) {
+                    panic!("Branches of `if` expression must have same type");
+                }
+
+                // unify(env, then_ast.id(), else_ast.id());
+
+                env.insert(id, fresh());
+                unify(env, id, then_ast.id());
+                unify(env, id, else_ast.id());
+            }
             Ast::Inv(..) => unimplemented!(),
-            Ast::Let(id, ref scope, span, ref bindings, ref body) => {
-                for &(id, ref name, ref ast) in bindings {
+            Ast::Let(id, ref _scope, _span, ref bindings, ref body) => {
+                for &(id, ref _name, ref ast) in bindings {
                     walk(env, ast);
 
                     env.insert(id, fresh());
@@ -713,7 +771,13 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
             Ast::EmptyList(..) => TypedAst::EmptyList,
             Ast::Fn(..) => unimplemented!(),
             Ast::I64Literal(_, _, _, val) => TypedAst::I64Literal(val),
-            Ast::If(..) => unimplemented!(),
+            Ast::If(id, _scope, _span, cond_ast, then_ast, else_ast) => {
+                let cond_ast = Box::new(to_typed(env, *cond_ast));
+                let then_ast = Box::new(to_typed(env, *then_ast));
+                let else_ast = Box::new(to_typed(env, *else_ast));
+
+                TypedAst::If(env.lookup_type(id), cond_ast, then_ast, else_ast)
+            }
             Ast::Inv(..) => unimplemented!(),
             Ast::Let(id, scope, _, bindings, body) => {
                 TypedAst::Let(env.lookup_type(id),
@@ -781,7 +845,13 @@ pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Box<
             TypedAst::EmptyList => unimplemented!(),
             TypedAst::Fn(..) => unimplemented!(),
             TypedAst::I64Literal(val) => Value::I64(val),
-            TypedAst::If(..) => unimplemented!(),
+            TypedAst::If(_, ref cond_ast, ref then_ast, ref else_ast) => {
+                match interpret_(env, &*cond_ast) {
+                    Value::Bool(true) => interpret_(env, &*then_ast),
+                    Value::Bool(false) => interpret_(env, &*else_ast),
+                    _ => unreachable!(),
+                }
+            }
             TypedAst::Inv(..) => unimplemented!(),
             TypedAst::Let(_, ref bindings, ref body) => {
                 let mut env = env.clone();
@@ -889,15 +959,26 @@ mod test {
     test1!(alias_i64, "(def x 10) (def y x) y", "10");
     test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
     test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
+    test1!(eval_if_t, "(if true 0 1)", "0");
+    test1!(eval_if_f, "(if false 0 1)", "1");
+    test1!(eval_if_def, "(def a false) (if a 0 1)", "1");
+    test1!(eval_if_let, "(let (a false) (if a 0 1))", "1");
+    test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
+
+    test1!(non_bool_if_cond,
+           "(if 0 0 1)",
+           "",
+           should_panic(expected = "Condition of `if` expression must be of type Bool"));
+
+    test1!(if_branch_mismatch,
+           "(if true 1 false)",
+           "",
+           should_panic(expected = "Branches of `if` expression must have same type"));
 
     test1!(circular_dep,
            "(def x y) (def y z) (def z x)",
            "",
            should_panic(expected = "Circular dependency: [\"x\", \"y\", \"z\"]"));
-
-    // test1!(eval_if_t, "(if true 0 1)", "0");
-    // test1!(eval_if_f, "(if false 0 1)", "1");
-    // test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
 
     // test1!(fn_eval, "(fn (a) a)", "");
 }

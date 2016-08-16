@@ -15,6 +15,8 @@ extern crate custom_derive;
 extern crate enum_derive;
 extern crate petgraph;
 extern crate disjoint_sets;
+#[macro_use]
+extern crate lazy_static;
 
 mod lang;
 mod read;

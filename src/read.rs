@@ -270,7 +270,7 @@ enum ReaderState {
 pub type ReaderMacroFunction = fn(&mut InputStream, &mut Env, u8)
                                   -> ::std::result::Result<Option<Sexp>, ReadError>;
 
-fn new_node_id() -> usize {
+pub fn new_node_id() -> usize {
     use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
     static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
 
