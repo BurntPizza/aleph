@@ -963,7 +963,30 @@ pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Stri
 
     //     Atom(Type, BindingId),
     //     Do(Type, Vec<TypedAst>),
-    // }
+
+    fn init_env(consts: &Table<BindingId, TypedAst>) -> Table<BindingId, Value> {
+        let mut env = Table::new();
+        let mut open_set = consts.into_iter().collect::<VecDeque<_>>();
+
+        while let Some((id, elem)) = open_set.pop_front() {
+            match *elem {
+                TypedAst::Atom(_, inner_id) => {
+                    if env.contains_key(&inner_id) {
+                        let val = interpret_(&env, elem);
+                        env.insert(*id, val);
+                    } else {
+                        open_set.push_back((id, elem));
+                    }
+                }
+                _ => {
+                    let val = interpret_(&env, elem);
+                    env.insert(*id, val);
+                }
+            }
+        }
+
+        env
+    }
 
     fn run_do<'a>(env: &Table<BindingId, Value<'a>>, body: &'a [TypedAst]) -> Value<'a> {
         let (last, rest) = body.split_last().unwrap();
@@ -1019,35 +1042,9 @@ pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Stri
         }
     }
 
-    let mut env = Table::new();
-    println!("{:#?}", consts);
-
-    let mut open_set = consts.into_iter().collect::<VecDeque<_>>();
-
-    while let Some((id, elem)) = open_set.pop_front() {
-        match *elem {
-            TypedAst::Atom(_, inner_id) => {
-                if env.contains_key(&inner_id) {
-                    let val = interpret_(&env, elem);
-                    env.insert(*id, val);
-                } else {
-                    open_set.push_back((id, elem));
-                }
-            }
-            _ => {
-                let val = interpret_(&env, elem);
-                env.insert(*id, val);
-            }
-        }
-    }
-
-    let (last, rest) = asts.split_last().unwrap();
-
-    for ast in rest {
-        interpret_(&env, ast);
-    }
-
-    format!("{}", interpret_(&env, last))
+    let env = init_env(consts);
+    let result = run_do(&env, asts);
+    format!("{}", result)
 }
 
 fn vec_collector<T>(mut b: Vec<T>, a: T) -> Vec<T> {
