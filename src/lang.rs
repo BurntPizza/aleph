@@ -60,6 +60,7 @@ const SPECIALS: [&'static str; 9] = ["let",
 
 const DIRECTIVES: [&'static str; 4] = ["def", "ns", "use", "defreader"];
 
+
 pub fn is_special<T>(symbol: T) -> bool
     where T: AsRef<str>
 {
@@ -161,7 +162,7 @@ fn new_binding_id() -> BindingId {
 }
 
 #[derive(Debug)]
-struct Binding {
+pub struct Binding {
     name: String,
     span: Span,
     ast_id: usize,
@@ -170,7 +171,7 @@ struct Binding {
 }
 
 #[derive(Hash, Eq, Debug, Clone, PartialEq)]
-enum Type {
+pub enum Type {
     I64,
     Bool,
     Unit,
@@ -514,31 +515,31 @@ pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
     }
 }
 
-pub fn process_decls(asts: &[Ast]) {
+// pub fn process_decls(asts: &[Ast]) {
 
-    // TODO: incorperate decls into type inferrence
+// // TODO: incorperate decls into type inferrence
 
-    fn type_of_ast(ast: &Ast) -> Type {
-        match *ast {
-            Ast::EmptyList(..) => Type::Unit,
-            Ast::BoolLiteral(..) => Type::Bool,
-            Ast::I64Literal(..) => Type::I64,
-            _ => unimplemented!(),
-        }
-    }
+//     fn type_of_ast(ast: &Ast) -> Type {
+//         match *ast {
+//             Ast::EmptyList(..) => Type::Unit,
+//             Ast::BoolLiteral(..) => Type::Bool,
+//             Ast::I64Literal(..) => Type::I64,
+//             _ => unimplemented!(),
+//         }
+//     }
 
-    for ast in asts {
-        match *ast {
-            Ast::Let(id, ref scope, span, ref bindings, _) => {
-                for &(id, ref string, ref ast) in bindings {
-                    scope.add_binding(string.clone(), span, id /* , type_of_ast(ast) */);
-                }
-            }
-            Ast::Fn(..) => unimplemented!(),
-            _ => {}
-        }
-    }
-}
+//     for ast in asts {
+//         match *ast {
+//             Ast::Let(_id, ref scope, span, ref bindings, _) => {
+//                 for &(id, ref string, ref ast) in bindings {
+//                     scope.add_binding(string.clone(), span, id /* , type_of_ast(ast) */);
+//                 }
+//             }
+//             Ast::Fn(..) => unimplemented!(),
+//             _ => {}
+//         }
+//     }
+// }
 
 #[derive(Debug)]
 pub enum TypedAst {
@@ -899,7 +900,7 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
             Ast::EmptyList(..) => TypedAst::EmptyList,
             // Fn(usize, Rc<Scope>, Span, Vec<usize>, Vec<Ast>),
             // Fn(Type, Vec<Rc<Binding>>, Vec<TypedAst>),
-            Ast::Fn(id, scope, span, params, body) => {
+            Ast::Fn(id, _scope, _span, params, body) => {
                 TypedAst::Fn(env.lookup_type(id).unwrap(),
                              params.into_iter()
                                    .map(|(_, binding)| binding)
@@ -960,22 +961,8 @@ pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> Stri
         }
     }
 
-    // #[derive(Debug)]
-    // pub enum TypedAst {
-    //     EmptyList,
-    //     I64Literal(i64),
-    //     BoolLiteral(bool),
-
     //     Atom(Type, BindingId),
-    //     Inv(Type, Box<TypedAst>, Vec<TypedAst>),
-
     //     Do(Type, Vec<TypedAst>),
-    //     // params, body
-    //     Fn(Type, Vec<Rc<Binding>>, Vec<TypedAst>),
-    //     // (params, values), body
-    //     Let(Type, Vec<(BindingId, TypedAst)>, Vec<TypedAst>),
-    //     // condition, then-expr, else-expr
-    //     If(Type, Box<TypedAst>, Box<TypedAst>, Box<TypedAst>),
     // }
 
     fn run_do<'a>(env: &Table<BindingId, Value<'a>>, body: &'a [TypedAst]) -> Value<'a> {
