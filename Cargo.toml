@@ -15,17 +15,5 @@ doc = false
 [dependencies]
 petgraph = "0.2"
 disjoint-sets = "0.3"
-custom_derive = "0.1"
-enum_derive = "0.1"
-byteorder = "0.5"
-itertools = "0.4.16"
-# clap = "^2"
-ansi_term = "0.7"
-          lazy_static = "0.2"
-hamt = { version = "0.1", git = "https://github.com/michaelwoerister/rs-persistent-datastructures" }
-clippy = { version = "0.0", optional = true }
-
-[dev-dependencies]
-
-[features]
-default = []
+itertools = "0.4"
+lazy_static = "0.2"
