@@ -4,11 +4,7 @@ rust:
   - beta
   - stable
 script:
-  - if [[ $TRAVIS_RUST_VERSION = nightly* ]]; then
-      cargo test --verbose --features clippy;
-    else
-      cargo test --verbose;
-    fi
+  - cargo test --verbose;
 
 matrix:
   allow_failures:
