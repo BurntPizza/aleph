@@ -6,12 +6,17 @@ extern crate petgraph;
 extern crate disjoint_sets;
 #[macro_use]
 extern crate lazy_static;
+#[macro_use]
+extern crate log;
 
 mod lang;
 mod read;
+mod ast;
+// mod typecheck;
+
 // mod census;
 // mod compile;
-//mod print_table;
+// mod print_table;
 
 // pub mod reader;
 // pub mod analyzer;

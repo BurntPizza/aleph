@@ -17,3 +17,7 @@ petgraph = "0.2"
 disjoint-sets = "0.3"
 itertools = "0.4"
 lazy_static = "0.2"
+log = "0.3"
+
+[dev-dependencies]
+slog-envlogger = "0.2"

@@ -7,8 +7,8 @@ use std::rc::Rc;
 use std::cell::RefCell;
 use std::error::Error;
 use std::convert::Into;
-use std::collections::HashMap;
-use std::fmt::{self, Display, Formatter};
+use std::collections::{HashMap, HashSet};
+use std::fmt::{self, Debug, Display, Formatter};
 
 use read::{Span, Sexp};
 
@@ -51,8 +51,8 @@ fn new_binding_id() -> BindingId {
 pub struct Binding {
     name: String,
     span: Span,
-    ast_id: usize,
     id: BindingId,
+    ast: Ast,
 }
 
 #[derive(Hash, Eq, Debug, Clone, PartialEq)]
@@ -76,11 +76,29 @@ impl Display for Type {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Scope {
     parent: Option<Rc<Scope>>,
     by_name: RefCell<HashMap<String, Rc<Binding>>>,
     by_id: RefCell<HashMap<BindingId, Rc<Binding>>>,
+}
+
+impl Debug for Scope {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f,
+               "<{}: {:#?}>",
+               if self.parent.is_none() {
+                   "root"
+               } else {
+                   "scope"
+               },
+               self.by_id
+                   .borrow()
+                   .keys()
+                   .map(|id| **id)
+                   .zip(self.by_name.borrow().keys())
+                   .collect::<Table<_, _>>())
+    }
 }
 
 impl Scope {
@@ -88,13 +106,13 @@ impl Scope {
         Rc::new(Scope { parent: Some(parent.clone()), ..Default::default() })
     }
 
-    fn add_binding(&self, name: String, span: Span, ast_id: usize) -> BindingId {
+    fn add_binding(&self, name: String, span: Span, ast: Ast) -> BindingId {
         let id = new_binding_id();
         let binding = Rc::new(Binding {
             name: name.clone(),
             span: span,
-            ast_id: ast_id,
             id: id,
+            ast: ast,
         });
 
         self.by_name.borrow_mut().insert(name, binding.clone());
@@ -128,7 +146,7 @@ pub enum Ast {
 
     Do(usize, Rc<Scope>, Span, Vec<Ast>),
     // params, body
-    Fn(usize, Rc<Scope>, Span, Vec<(usize, Rc<Binding>)>, Vec<Ast>),
+    Fn(usize, Rc<Scope>, Span, Vec<(usize, BindingId)>, Vec<Ast>),
     // (params, values), body
     Let(usize, Rc<Scope>, Span, Vec<(usize, String, Ast)>, Vec<Ast>),
     // condition, then-expr, else-expr
@@ -207,7 +225,17 @@ pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<Bind
             Ast::BoolLiteral(..) |
             Ast::EmptyList(..) |
             Ast::I64Literal(..) => vec![],
-            _ => panic!("unimpl: {:?}", ast),
+            Ast::Fn(_, _, _, ref params, ref body) => {
+                let params = params.into_iter()
+                                   .map(|&(_, binding_id)| binding_id)
+                                   .collect::<HashSet<_>>();
+
+                body.into_iter()
+                    .flat_map(|ast| get_deps(ast).into_iter())
+                    .filter(|id| !params.contains(id))
+                    .collect()
+            }
+            _ => panic!("get_deps: unimpl: {:#?}", ast),
         }
     }
 
@@ -221,18 +249,23 @@ pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<Bind
             Ast::I64Literal(id, _, _, _) => (id, TypeTerm::Known(Type::I64)),
             Ast::BoolLiteral(id, _, _, _) => (id, TypeTerm::Known(Type::Bool)),
             Ast::Atom(id, _, _, _) => (id, TypeTerm::Unknown),
+            Ast::Fn(id, _, _, ref params, ref body) => {
+                (id,
+                 TypeTerm::FnInProgress(params.into_iter().map(|&(id, _)| id).collect(),
+                                        body.last().unwrap().id()))
+            }
             _ => unimplemented!(),
         };
 
-        let binding_id = global_scope.add_binding(name.clone(), span, id);
-        let node_idx = def_graph.add_node((binding_id, ast));
+        let binding_id = global_scope.add_binding(name.clone(), span, ast);
+        let node_idx = def_graph.add_node(binding_id);
 
         binding_id_to_node_idx.insert(binding_id, node_idx);
         env.insert(id, Var::new(ty));
     }
 
     for idx in def_graph.node_indices() {
-        for id in get_deps(&def_graph[idx].1) {
+        for id in get_deps(&global_scope.get(def_graph[idx]).ast) {
             let dep_idx = binding_id_to_node_idx[&id];
             def_graph.add_edge(idx, dep_idx, ());
         }
@@ -242,13 +275,18 @@ pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<Bind
         if scc.len() > 1 {
             panic!("Cyclic dependency: {:?}",
                    scc.into_iter()
-                      .map(|idx| global_scope.get(def_graph[idx].0).name.clone())
+                      .map(|idx| global_scope.get(def_graph[idx]).name.clone())
                       .collect_vec());
         }
     }
 
     let (nodes, _) = def_graph.into_nodes_edges();
-    let (ids, asts): (Vec<_>, _) = nodes.into_iter().map(|node| node.weight).unzip();
+    let (ids, asts): (Vec<_>, _) = nodes.into_iter()
+                                        .map(|node| {
+                                            (node.weight, global_scope.get(node.weight).ast.clone())
+                                        })
+                                        .unzip();
+    println!("Asts: {:#?}", asts);
     let asts = type_infer(&mut env, asts);
 
     (env, ids.into_iter().zip(asts).collect())
@@ -343,7 +381,7 @@ pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
 
                             for (id, span, name, value_sexp) in binding_list_src {
                                 let value = try!(sexp_to_ast(inner_scope.clone(), value_sexp));
-                                scope.add_binding(name.clone(), span, id);
+                                scope.add_binding(name.clone(), span, value.clone());
                                 binding_list.push((id, name, value));
                             }
 
@@ -362,19 +400,26 @@ pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
                             let params_list = match sexps.remove(0) {
                                 Sexp::List(_, _, sexps) => {
                                     sexps.into_iter()
-                                         .map(|sexp| match sexp {
+                                         .map(|sexp| match sexp.clone() {
                                              Sexp::Atom(id, span, string) => {
+                                                 let ast = try!(sexp_to_ast(inner_scope.clone(),
+                                                                            sexp));
                                                  let binding_id = inner_scope.add_binding(string,
                                                                                           span,
-                                                                                          id);
+                                                                                          ast);
 
-                                                 (id, inner_scope.get(binding_id))
+                                                 Ok((id, binding_id))
                                              }
-                                             _ => panic!("param must be Atom"),
+                                             _ => Err("param must be Atom".into()),
                                          })
-                                         .collect_vec()
+                                         .fold_results(vec![], vec_collector)
                                 }
-                                _ => panic!("First arg of `fn` must be a list"),
+                                _ => Err("First arg of `fn` must be a list".into()),
+                            };
+
+                            let params_list = match params_list {
+                                Ok(v) => v,
+                                Err(e) => return Err(e),
                             };
 
                             let body_asts = try!(sexps.into_iter()
@@ -382,6 +427,10 @@ pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
                                                           sexp_to_ast(inner_scope.clone(), sexp)
                                                       })
                                                       .fold_results(vec![], vec_collector));
+
+                            // TODO (NOW): lambda lifting
+                            // what is needed in a fn prototype?
+
 
                             Ok(Ast::Fn(id, scope.clone(), span, params_list, body_asts))
                         }
@@ -541,10 +590,12 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
             Ast::Atom(id, ref scope, _span, ref string) => {
                 match scope.lookup(&**string) {
                     Some(binding) => {
-                        let term = env.lookup_type(binding.ast_id).map(known).unwrap_or_else(fresh);
-                        env.insert(binding.ast_id, term);
+                        let term = env.lookup_type(binding.ast.id())
+                                      .map(known)
+                                      .unwrap_or_else(fresh);
+                        env.insert(binding.ast.id(), term);
                         env.insert(id, fresh());
-                        unify(env, binding.ast_id, id);
+                        unify(env, binding.ast.id(), id);
                     }
                     _ => {
                         env.insert(id, fresh());
@@ -618,9 +669,21 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
                 WalkId::Simple(id)
             }
             Ast::Inv(id, ref _scope, _span, ref callee, ref args) => {
+
+                // match **callee {
+                //     Ast::Fn(id, ref scope, _span, ref params, ref body) => unimplemented!(),
+                //     Ast::Atom(id, ref scope, _span, ref string) => unimplemented!(),
+                //     _ => panic!("walk -> Ast::Inv"),
+                // }
+
+
                 let (arg_ids, ret_id) = match walk(env, callee) {
                     WalkId::Fn(arg_ids, ret_id) => (arg_ids, ret_id),
-                    _ => panic!("Invocation of non-fn: {:?}", callee),
+                    WalkId::Simple(id) => {
+                        //
+                        unimplemented!()
+                    }
+                    // _ => panic!("Invocation of non-fn: {:#?}", callee),
                 };
 
                 for (arg, arg_receptor_id) in args.into_iter().zip(arg_ids.into_iter()) {
@@ -667,10 +730,10 @@ pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
                              children.into_iter().map(|ast| to_typed(env, ast)).collect())
             }
             Ast::EmptyList(..) => TypedAst::EmptyList,
-            Ast::Fn(id, _scope, _span, params, body) => {
+            Ast::Fn(id, scope, _span, params, body) => {
                 TypedAst::Fn(env.lookup_type(id).unwrap(),
                              params.into_iter()
-                                   .map(|(_, binding)| binding)
+                                   .map(|(_, binding_id)| scope.get(binding_id))
                                    .collect(),
                              body.into_iter().map(|ast| to_typed(env, ast)).collect())
             }
@@ -818,10 +881,35 @@ fn vec_collector<T>(mut b: Vec<T>, a: T) -> Vec<T> {
 
 #[cfg(test)]
 mod test {
+    extern crate slog_envlogger;
+
     use itertools::*;
     use std::rc::Rc;
 
     use lang;
+
+    fn test_(input: &str, expected: &str) {
+        let _ = slog_envlogger::init();
+        debug!("Test input: {}", input);
+
+        let sexps = lang::read(input);
+        let (defs, sexps) = lang::separate_defs(sexps).unwrap();
+        let global_scope = Rc::new(lang::Scope::default());
+        let (mut type_env, consts) = lang::process_defs(global_scope.clone(), defs);
+        let asts = sexps.into_iter()
+                        .map(|sexp| lang::sexp_to_ast(global_scope.clone(), sexp))
+                        .fold_results(vec![], lang::vec_collector)
+                        .unwrap();
+
+        let typed_asts = lang::type_infer(&mut type_env, asts);
+
+        debug!("{:#?}", type_env);
+        debug!("Typed Asts: {:#?}", typed_asts);
+
+        let result = lang::interpret(&consts, &*typed_asts);
+
+        assert_eq!(expected, result);
+    }
 
     macro_rules! test1 {
         ($name:ident, $input:expr, $expected:expr) => {
@@ -830,27 +918,8 @@ mod test {
         ($name:ident, $input:expr, $expected:expr, $($extra:meta),*) => {
             #[test]
             $(#[$extra])*
-            fn $name() {                
-                let input: &'static str = $input;
-                let expected: &'static str = $expected;
-                
-                let sexps = lang::read(input);
-                let (defs, sexps) = lang::separate_defs(sexps).unwrap();
-                let global_scope = Rc::new(lang::Scope::default());
-                let (mut type_env, consts) = lang::process_defs(global_scope.clone(), defs);
-                let asts = sexps.into_iter()
-                    .map(|sexp| lang::sexp_to_ast(global_scope.clone(), sexp))
-                    .fold_results(vec![], lang::vec_collector)
-                    .unwrap();
-
-                let typed_asts = lang::type_infer(&mut type_env, asts);
-
-                println!("{:#?}", type_env);
-                println!("{:#?}", typed_asts);
-
-                let result = lang::interpret(&consts, &*typed_asts);
-                
-                assert_eq!(expected, result);
+            fn $name() {
+                test_($input, $expected);
             }
         }
     }
@@ -869,8 +938,12 @@ mod test {
     test1!(eval_if_def, "(def a false) (if a 0 1)", "1");
     test1!(eval_if_let, "(let (a false) (if a 0 1))", "1");
     test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
-    test1!(fn_eval, "((fn (a) a) 1)", "1");
     test1!(eval_do, "(do 1 2 ())", "()");
+    // test1!(fn_eval, "((fn (a) a) 1)", "1");
+    // test1!(named_fn, "(def f (fn (a) a)) (f 1)", "1");
+    test1!(nullary_fn, "((fn () 0))", "0");
+    // test1!(named_nullary_fn, "(def f (fn () 1)) (f)", "1");
+
 
     test1!(non_bool_if_cond,
            "(if 0 0 1)",
