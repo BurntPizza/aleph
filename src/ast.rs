@@ -87,8 +87,8 @@ impl Into<File> for Sexps {
 
         let (defs, exprs): (Vec<_>, Vec<_>) = self.into_iter().partition_map(|sexp| {
             match sexp.into() {
-                Item::Def(def) => Partition::Left(def),
-                Item::Expr(e) => Partition::Right(e),
+                Item::Def(def) => Either::Left(def),
+                Item::Expr(e) => Either::Right(e),
             }
         });
 

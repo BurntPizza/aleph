@@ -4,20 +4,19 @@ license = "MIT"
 name = "aleph"
 version = "0.1.0"
 
+[[bin]]
+doc = false
+name = "aleph"
+
+[dependencies]
+disjoint-sets = "0.3"
+itertools = "0.5"
+lazy_static = "0.2"
+log = "0.3"
+petgraph = "0.2"
+
+[dev-dependencies]
+slog-envlogger = "0.5"
 
 [lib]
 name = "aleph"
-
-[[bin]]
-name = "aleph"
-doc = false
-
-[dependencies]
-petgraph = "0.2"
-disjoint-sets = "0.3"
-itertools = "0.4"
-lazy_static = "0.2"
-log = "0.3"
-
-[dev-dependencies]
-slog-envlogger = "0.2"

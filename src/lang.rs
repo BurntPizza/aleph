@@ -191,12 +191,12 @@ pub fn separate_defs(sexps: Vec<Sexp>) -> Result<(Vec<Def>, Vec<Sexp>)> {
                     let _def_symbol = sexps.remove(0);
                     let name = sexps.remove(0);
                     let rhs = sexps.remove(0);
-                    return Partition::Left((span, name, rhs));
+                    return Either::Left((span, name, rhs));
                 } else {
-                    Partition::Right(Sexp::List(id, span, sexps))
+                    Either::Right(Sexp::List(id, span, sexps))
                 }
             }
-            _ => Partition::Right(sexp),
+            _ => Either::Right(sexp),
         }
     });
 
