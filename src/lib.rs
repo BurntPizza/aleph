@@ -9,9 +9,9 @@ extern crate lazy_static;
 #[macro_use]
 extern crate log;
 
-mod lang;
-mod read;
-mod ast;
+pub mod lang;
+pub mod read;
+pub mod ast;
 // mod typecheck;
 
 // mod census;

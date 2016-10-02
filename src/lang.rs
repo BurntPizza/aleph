@@ -548,6 +548,7 @@ impl Env {
     }
 }
 
+/// TODO: replace with constraint version
 pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
 
     fn fresh() -> Var {
