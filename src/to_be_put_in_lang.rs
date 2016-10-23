@@ -470,11 +470,12 @@ mod tests {
     extern crate slog_envlogger;
 
     use lang;
-    use super::TypeAcceptor::*;
-    use super::TypeId;
 
     #[test]
     fn accept() {
+        use super::TypeId;
+        use super::TypeAcceptor::*;
+
         assert!(Void.accepts(&[]));
         assert!(!Void.accepts(&[TypeId(0)]));
         assert!(Type(TypeId(5)).accepts(&[TypeId(5)]));
@@ -485,22 +486,24 @@ mod tests {
     #[ignore]
     #[test]
     fn parse() {
+        use super::*;
+
         let _ = slog_envlogger::init();
 
         let input = "(def a 1) (def b 2) (def c b) (def d c) a b";
         let sexps = lang::read(input);
 
-        panic!("{:#?}", super::parse_module(Some("test_mod"), sexps));
+        panic!("{:#?}", parse_module(Some("test_mod"), sexps));
     }
 
     #[test]
-    fn interpret() {
+    fn test_interpret() {
+        use super::*;
+
         let _ = slog_envlogger::init();
 
-        let input = "1";
-        let sexps = lang::read(input);
-        let module = super::parse_module(Some("interpret_mod"), sexps).unwrap();
-        let result = super::interpret(&*module.code);
+        let asts = vec![Ast::Num(1)];
+        let result = interpret(&*asts);
 
         assert_eq!("1", result);
     }
