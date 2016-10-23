@@ -1,0 +1,33 @@
+(not doing defs yet)
+
+envs: [fn_id -> fn_definition], [ExprId -> TypeState], [VarId -> TypeState]
+
+sexps -> ast, +fn_defs, +VarIds, +typestates
+
+Ast = Unit                       // type is trivial
+    | Bool  (val)                // type is trivial
+    | Num   (val)                // type is trivial
+    | FnPtr (fn_id)              // type in definition
+    | Var   id (var_id)             // type in table?
+    | Do    id (body)               // infer: (body:ret)
+    | Call  id (fn_id, args)        // infer: ret = (fn_def:ret), args = (fn_def:args)
+    | Let   id (labels, args, body) // infer: ret = body, labels = args, labels = (body:uses)
+
+FnDef {
+    labels,
+    body,
+}
+
+TypeState = Unknown
+          | Equiv   (ExprId)
+          | Known   (TypeId)
+
+ExecT = Unit
+      | Num   (val)
+      | Bool  (val)
+      | FnPtr (fn_id)
+
+      // control flow:
+      | Do    (body)         // run body
+      | Call  (args, fn_id)  // args -> seq of values, call fn_id with seq
+      | Let   (args, body)   // args -> seq of values, run body with seq

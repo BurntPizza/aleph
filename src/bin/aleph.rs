@@ -1,8 +1,9 @@
 
-// #![cfg_attr(feature="clippy", feature(plugin))]
-// #![cfg_attr(feature="clippy", plugin(clippy))]
+extern crate aleph;
 
-// extern crate aleph;
+fn main() {}
+
+
 // use aleph::reader;
 
 // extern crate itertools;

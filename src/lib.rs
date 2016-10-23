@@ -1,6 +1,7 @@
 
 //! The Aleph Programming Langauge
 
+#[macro_use]
 extern crate itertools;
 extern crate petgraph;
 extern crate disjoint_sets;
@@ -12,6 +13,7 @@ extern crate log;
 pub mod lang;
 pub mod read;
 pub mod ast;
+pub mod to_be_put_in_lang;
 // mod typecheck;
 
 // mod census;

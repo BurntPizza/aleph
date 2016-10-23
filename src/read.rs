@@ -305,6 +305,33 @@ pub enum Sexp {
     List(usize, Span, Vec<Sexp>),
 }
 
+impl Sexp {
+    pub fn empty_atom() -> Self {
+        Sexp::Atom(0, Span::new(0, 0), String::new())
+    }
+
+    pub fn is_atom_of(&self, v: &str) -> bool {
+        match *self {
+            Sexp::Atom(_, _, ref s) => s == v,
+            _ => false
+        }
+    }
+
+    pub fn extract_atom(self) -> Result<String, Self> {
+        match self {
+            Sexp::Atom(_, _, s) => Ok(s),
+            _ => Err(self),
+        }
+    }
+
+    pub fn extract_list(self) -> Result<Vec<Sexp>, Self> {
+        match self {
+            Sexp::List(_, _, s) => Ok(s),
+            _ => Err(self),
+        }
+    }
+}
+
 impl Display for Sexp {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
