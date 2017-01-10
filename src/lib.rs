@@ -1,19 +1,28 @@
 
 //! The Aleph Programming Langauge
 
+// temp
+#![allow(unused_variables)]
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
+
 #[macro_use]
 extern crate itertools;
 extern crate petgraph;
+extern crate ena;
 extern crate disjoint_sets;
 #[macro_use]
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
 
-pub mod lang;
+extern crate tiered_map;
+
+// pub mod _lang;
 pub mod read;
-pub mod ast;
-pub mod to_be_put_in_lang;
+// pub mod ast;
+pub mod lang;
 // mod typecheck;
 
 // mod census;

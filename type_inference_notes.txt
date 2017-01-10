@@ -31,3 +31,8 @@ ExecT = Unit
       | Do    (body)         // run body
       | Call  (args, fn_id)  // args -> seq of values, call fn_id with seq
       | Let   (args, body)   // args -> seq of values, run body with seq
+
+
+
+
+Need fn to traverse fn/let bodies while keeping track of env and find usages of labels, turn them into unique VarIds, global for analysis, and later local for execution

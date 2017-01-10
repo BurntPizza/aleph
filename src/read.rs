@@ -17,7 +17,7 @@ impl Env {
     }
 
     fn lookup_reader_macro(&self, c: u8) -> Option<ReaderMacroFunction> {
-        self.reader_macros.get(&(c as char)).map(|&f| f)
+        self.reader_macros.get(&(c as char)).cloned()
     }
 
     fn new_reader_macro(&mut self, c: char, f: ReaderMacroFunction, type_: MacroCharType) {
@@ -45,9 +45,9 @@ impl Default for Env {
             env.read_table.insert(k, v);
         }
 
-        env.new_reader_macro(';', line_comment_reader, MacroCharType::Terminating);
-        env.new_reader_macro('(', left_paren_reader, MacroCharType::Terminating);
-        env.new_reader_macro(')', right_paren_reader, MacroCharType::Terminating);
+        env.new_reader_macro(';', ReaderMacroFunction(line_comment_reader), MacroCharType::Terminating);
+        env.new_reader_macro('(', ReaderMacroFunction(left_paren_reader), MacroCharType::Terminating);
+        env.new_reader_macro(')', ReaderMacroFunction(right_paren_reader), MacroCharType::Terminating);
 
         env
     }
@@ -267,8 +267,15 @@ enum ReaderState {
     TokenFinished,
 }
 
-pub type ReaderMacroFunction = fn(&mut InputStream, &mut Env, u8)
-                                  -> ::std::result::Result<Option<Sexp>, ReadError>;
+#[derive(Copy)]
+pub struct ReaderMacroFunction(fn(&mut InputStream, &mut Env, u8)
+                                  -> ::std::result::Result<Option<Sexp>, ReadError>);
+
+impl Clone for ReaderMacroFunction {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 
 pub fn new_node_id() -> usize {
     use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
@@ -306,14 +313,20 @@ pub enum Sexp {
 }
 
 impl Sexp {
-    pub fn empty_atom() -> Self {
-        Sexp::Atom(0, Span::new(0, 0), String::new())
+    pub fn id(&self) -> usize {
+        match *self {
+            Sexp::Atom(id, ..) |
+            Sexp::List(id, ..) => id,
+        }
     }
+    // pub fn empty_atom() -> Self {
+    //     Sexp::Atom(0, Span::new(0, 0), String::new())
+    // }
 
     pub fn is_atom_of(&self, v: &str) -> bool {
         match *self {
             Sexp::Atom(_, _, ref s) => s == v,
-            _ => false
+            _ => false,
         }
     }
 
@@ -345,7 +358,7 @@ impl Display for Sexp {
     }
 }
 
-/// Ported from the [Common Lisp HyperSpec](http://clhs.lisp.se/Body/02_b.htm)
+/// Ported from the [Common Lisp `HyperSpec`](http://clhs.lisp.se/Body/02_b.htm)
 fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<Sexp, ReadError> {
 
     use self::MacroCharType::*;
@@ -368,7 +381,7 @@ fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<
                             MacroChar(_) => {
                                 match env.lookup_reader_macro(x) {
                                     Some(f) => {
-                                        match f(stream, env, x) {
+                                        match f.0(stream, env, x) {
                                             Ok(Some(ast)) => return Ok(ast),
                                             Ok(None) => {} // repeat step 1
                                             Err(e) => return Err(e),
@@ -394,7 +407,7 @@ fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<
                                 state = Accumulating;
                             }
                         }
-                    }       
+                    }
                     None => {
                         return Err(if token.is_empty() {
                             ReadError::empty_token().into()
@@ -646,5 +659,5 @@ pub fn right_paren_reader(_: &mut InputStream,
                           _: &mut Env,
                           _: u8)
                           -> Result<Option<Sexp>, ReadError> {
-    return Err(ReadError::other("Unexpected right parenthesis"));
+    Err(ReadError::other("Unexpected right parenthesis"))
 }

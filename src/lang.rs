@@ -1,963 +1,995 @@
 
-use itertools::*;
-use petgraph;
-use disjoint_sets::UnionFindNode;
-
-use std::rc::Rc;
-use std::cell::RefCell;
 use std::error::Error;
-use std::convert::Into;
-use std::collections::{HashMap, HashSet};
-use std::fmt::{self, Debug, Display, Formatter};
+use std::rc::Rc;
+use std::collections::HashMap;
 
-use read::{Span, Sexp};
+use itertools::*;
+use disjoint_sets::*;
 
-pub type Table<K, V> = HashMap<K, V>;
-pub type Result<T> = ::std::result::Result<T, Box<Error>>;
+use tiered_map::*;
 
-macro_rules! def_id {
-    ($name:ident, $ty:ty) => {
-        #[derive(PartialEq, PartialOrd, Eq, Hash, Copy, Clone, Debug)]
-        pub struct $name($ty);
+use read::Sexp;
 
-        impl ::std::convert::From<$ty> for $name {
-            fn from(val: $ty) -> Self {
-                $name(val)
+
+// parse pub-defs, priv-defs, and non-defs
+// create initial TypeEnv, DefEnv
+// pub-defs, TypeEnv, DefEnv => TypedAsts, TypeEnv2
+// type infer priv-defs using TypeEnv2 => TypedAsts, TypeEnv3
+// add typed priv-def-asts to DefEnv -> DefEnv2
+// type inder non-defs using TypeEnv3 => TypedAsts
+//
+// interpret typed-non-def-asts using DefEnv2
+//
+//
+
+
+// TODO: try_match(&TypeAcceptor, &[TypeId]) -> Result<TypeMatch, PartialMatch>
+
+pub type AResult<T> = Result<T, Box<::std::error::Error>>;
+
+macro_rules! newtype_id {
+    ($name:ident) => {
+        #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
+        pub struct $name(usize);
+
+        impl ::std::convert::From<usize> for $name {
+            fn from(x: usize) -> Self {
+                $name(x)
             }
         }
 
-        impl ::std::ops::Deref for $name {
-            type Target = $ty;
-            fn deref(&self) -> &Self::Target {
-                &self.0
+        impl ::std::convert::From<$name> for usize {
+            fn from(x: $name) -> usize {
+                x.0
             }
         }
-    }
+    };
 }
 
-def_id!(BindingId, usize);
-def_id!(ScopeId, u32);
+// #[derive(Debug)]
+// pub struct Module {
+//     name: Option<String>,
+//     pub_defs: Vec<Rc<Def>>,
+//     prv_defs: Vec<Rc<Def>>,
+//     code: Vec<Ast>,
+// }
 
-pub struct Def(Span, String, Sexp);
+// #[derive(Debug)]
+// pub struct Def {
+//     name: String,
+//     id: usize,
+//     doc_string: Option<String>,
+//     type_sig: Option<TypeAcceptor>,
+//     public: bool,
+//     body: Rc<Expr>,
+// }
 
-fn new_binding_id() -> BindingId {
-    use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT, Ordering};
-    static COUNTER: AtomicUsize = ATOMIC_USIZE_INIT;
+// impl Def {
+//     pub fn new_private(name: String, id: usize, body: Expr) -> Self {
+//         Def {
+//             name: name,
+//             id: id,
+//             doc_string: None,
+//             type_sig: None,
+//             body: Rc::new(body),
+//             public: false,
+//         }
+//     }
 
-    COUNTER.fetch_add(1, Ordering::SeqCst).into()
+//     pub fn name(&self) -> &str {
+//         &*self.name
+//     }
+
+//     pub fn body(&self) -> Rc<Expr> {
+//         self.body.clone()
+//     }
+// }
+
+// pub fn parse_module<S: Into<String>>(name: Option<S>, sexps: Vec<Sexp>) -> AResult<Module> {
+//     let mut pub_defs = vec![];
+//     let mut prv_defs = vec![];
+//     let mut def_errs = vec![];
+//     let mut non_defs = vec![];
+
+//     for sexp in sexps {
+//         match sexp {
+//             // defs
+//             Sexp::List(id, span, mut s) => {
+//                 if !s.is_empty() && s[0].is_atom_of("def") {
+//                     s.remove(0);
+//                     match parse_def(s) {
+//                         Ok(d) => {
+//                             let d = Rc::new(d);
+//                             if d.public {
+//                                 pub_defs.push(d)
+//                             } else {
+//                                 prv_defs.push(d)
+//                             }
+//                         }
+//                         Err(e) => def_errs.push(e),
+//                     }
+//                 } else {
+//                     non_defs.push(Sexp::List(id, span, s));
+//                 }
+//             }
+//             _ => non_defs.push(sexp),
+//         }
+//     }
+
+//     if !def_errs.is_empty() {
+//         return Err(format!("Error: Failed to parse module: {}",
+//                            def_errs.iter().format(", "))
+//                        .into());
+//     }
+
+//     let mut def_env = HashMap::new();
+//     let mut type_env = HashMap::new();
+
+//     for def in pub_defs.iter().cloned() {
+//         def_env.insert(def.name().to_owned(), def);
+//     }
+
+//     infer_prv_defs(&mut def_env, &mut type_env, &*prv_defs);
+//     // infer_non_defs(&mut def_env, &mut type_env, &*non_defs);
+
+//     Ok(Module {
+//         name: name.map(Into::into),
+//         pub_defs: pub_defs,
+//         prv_defs: prv_defs,
+//         code: vec![],
+//     })
+// }
+
+// #[derive(Debug)]
+// pub enum Expr {
+//     Unit,
+//     Num(i64),
+//     Id(usize, String),
+//     App {
+//         fun: Rc<Expr>,
+//         args: Vec<Rc<Expr>>,
+//     },
+//     Lam {
+//         name: usize,
+//         body: Vec<Rc<Expr>>,
+//     },
+// }
+
+// #[derive(Debug)]
+// enum Term {
+//     TExp(Rc<Expr>),
+//     Var(usize),
+//     Num,
+//     Unit,
+//     Arrow(Vec<Term>, Box<Term>),
+// }
+
+// #[derive(Debug)]
+// enum Constraint {
+//     Eq(Term, Term),
+// }
+
+// type Node = UnionFindNode<Option<Type>>;
+
+// fn infer_prv_defs(def_env: &mut HashMap<String, Rc<Def>>,
+//                   type_env: &mut HashMap<usize, Type>,
+//                   prv_defs: &[Rc<Def>]) {
+
+
+//     let mut constraints = vec![];
+//     let mut var_env = HashMap::new();
+
+//     for def in prv_defs {
+//         var_env.insert(def.id, Node::new(None));
+//         // constraints.push(Constraint::Eq(Term::Var(def.id), Term::TExp(def.body())));
+//         constraint_gen(&mut constraints, def.body());
+//         def_env.insert(def.name().to_owned(), def.clone());
+//     }
+
+// println!("\n{:?}", constraints.iter().format(",\n"));
+
+//     let unify = |a: usize, b: usize| {
+//         if a != b {
+//             let mut an = var_env.remove(&a).unwrap();
+//             an.union_with(var_env.get_mut(&b).unwrap(), |a, b| {
+//                 match (a, b) {
+//                     (a, None) => a,
+//                     (None, b) => b,
+//                     _ => unimplemented!(),
+//                 }
+//             });
+//             var_env.insert(a, an);
+//         }
+//     };
+
+//     for c in constraints {
+//         match c {
+//             Constraint::Eq(a, b) => {
+//                 match a {
+//                     Term::TExp(expr) => {
+//                         match b {
+//                             Term::Var(id) => {}
+//                             _ => unimplemented!(),
+//                         }
+//                     }
+//                     _ => unimplemented!(),
+//                 }
+//             }
+//         }
+//     }
+
+// // let var_names: HashMap<_, _> = def_env.iter().map(|(k, v)| (v.id, k.to_owned())).collect();
+
+//     // let var_env: HashMap<_, _> = var_env.into_iter().map(|(k, v)| {
+//     //     (var_names[&k].to_owned(), v.find().clone_data())
+//     // }).collect();
+// }
+
+// fn constraint_gen(constraints: &mut Vec<Constraint>, expr: Rc<Expr>) {
+//     use self::Constraint::*;
+
+//     match *expr {
+//         Expr::Unit => {} //constraints.push(Eq(Term::TExp(expr.clone()), Term::Unit)),
+//         Expr::Num(_) => {} // constraints.push(Eq(Term::TExp(expr.clone()), Term::Num)),
+//         Expr::Id(id, _) => constraints.push(Eq(Term::TExp(expr.clone()), Term::Var(id))),
+//         Expr::App { ref fun, ref args } => {
+//             constraints.push(Eq(Term::TExp(fun.clone()),
+//                                 Term::Arrow(args.iter().cloned().map(Term::TExp).collect(),
+//                                             Box::new(Term::TExp(expr.clone())))));
+//             constraint_gen(constraints, fun.clone());
+//             for expr in args.iter().cloned() {
+//                 constraint_gen(constraints, expr);
+//             }
+//         }
+//         Expr::Lam { name, ref body } => {
+//             constraints.push(Eq(Term::TExp(expr.clone()),
+//                                 Term::Arrow(vec![Term::Var(name)],
+//                                             Box::new(Term::TExp(body.last()
+//                                                                     .expect("empty lambda \
+//                                                                              body")
+//                                                                     .clone())))));
+//             for expr in body.iter().cloned() {
+//                 constraint_gen(constraints, expr);
+//             }
+//         }
+//     }
+// }
+
+// pub fn parse_def(sexp: &Sexp) -> AResult<Def> {
+//     debug!("Attempting to parse_def input: {:?}", sexp);
+
+//     match *sexp {
+//         Sexp::List(id, span, ref sexps) => {
+//             if sexps.len() != 2 {
+//                 return Err("Defs must have exactly 2 arguments".into());
+//             }
+
+//             let (name, id) = if let Sexp::Atom(id, _, ref s) = sexps[1] {
+//                 (s, id)
+//             } else {
+//                 return Err("First argument of Def must be a name".into());
+//             };
+
+// let body = try!(sexp_to_expr(&sexps[0]));
+
+//             Ok(Def::new_private(name.to_owned(), id, body))
+//         }
+//         _ => Err(unimplemented!()),
+//     }
+// }
+
+// fn sexp_to_expr(sexp: Sexp) -> AResult<Expr> {
+//     match sexp {
+//         Sexp::Atom(id, _, s) => {
+//             match s.parse() {
+//                 Ok(n) => Ok(Expr::Num(n)),
+//                 _ => Ok(Expr::Id(id, s)),
+//             }
+//         }
+//         Sexp::List(_, _, mut c) => {
+//             if c.is_empty() {
+//                 Ok(Expr::Unit)
+//             } else {
+//                 if c[0].is_atom_of("fn") {
+//                     c.remove(0);
+
+//                     if c.len() != 2 {
+//                         return Err("Fn must have 2 args".into());
+//                     }
+
+//                     let name = if let Sexp::Atom(id, _, _) = c.remove(0) {
+//                         id
+//                     } else {
+//                         return Err("First arg of fn must be a name".into());
+//                     };
+//                     // let name = try!(c.remove(0)
+//                     //                  .extract_atom()
+//                     //                  .map_err(|_| {
+//                     //                      Box::<Error>::from("First arg of fn must be a name")
+//                     //                  }));
+
+//                     Ok(Expr::Lam {
+//                         name: name,
+//                         body: try!(sexps_to_exprs(c)).into_iter().map(Rc::new).collect(),
+//                     })
+//                 } else {
+//                     Ok(Expr::App {
+//                         fun: Rc::new(try!(sexp_to_expr(c.remove(0)))),
+//                         args: try!(sexps_to_exprs(c)).into_iter().map(Rc::new).collect(),
+//                     })
+//                 }
+//             }
+//         }
+//     }
+// }
+
+// fn sexps_to_exprs(sexps: Vec<Sexp>) -> AResult<Vec<Expr>> {
+//     sexps.into_iter().map(sexp_to_expr).collect()
+// }
+
+fn id<T>(t: T) -> T {
+    t
 }
 
+// regular language of types (over alphabet of TypeIds)
 #[derive(Debug)]
-pub struct Binding {
-    name: String,
-    span: Span,
-    id: BindingId,
-    ast: Ast,
+pub enum TypeAcceptor {
+    Void, // the "empty string"
+    Type(TypeId),
+    Union(Vec<TypeAcceptor>),
+    Concat(Vec<TypeAcceptor>),
+    Star(Box<TypeAcceptor>),
 }
 
-#[derive(Hash, Eq, Debug, Clone, PartialEq)]
-pub enum Type {
-    I64,
-    Bool,
-    Unit,
-    Fn(Vec<Type>, Box<Type>),
-}
+// upgrade to actually compute match
+impl TypeAcceptor {
+    pub fn accepts(&self, t: &[TypeId]) -> bool {
+        use self::TypeAcceptor::*;
 
-impl Display for Type {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f,
-               "{}",
-               match *self {
-                   Type::Bool => "Bool",
-                   Type::I64 => "I64",
-                   Type::Unit => "()",
-                   _ => unimplemented!(),
-               })
-    }
-}
-
-#[derive(Default)]
-pub struct Scope {
-    parent: Option<Rc<Scope>>,
-    by_name: RefCell<HashMap<String, Rc<Binding>>>,
-    by_id: RefCell<HashMap<BindingId, Rc<Binding>>>,
-}
-
-impl Debug for Scope {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f,
-               "<{}: {:#?}>",
-               if self.parent.is_none() {
-                   "root"
-               } else {
-                   "scope"
-               },
-               self.by_id
-                   .borrow()
-                   .keys()
-                   .map(|id| **id)
-                   .zip(self.by_name.borrow().keys())
-                   .collect::<Table<_, _>>())
-    }
-}
-
-impl Scope {
-    fn child_of(parent: Rc<Scope>) -> Rc<Self> {
-        Rc::new(Scope { parent: Some(parent.clone()), ..Default::default() })
-    }
-
-    fn add_binding(&self, name: String, span: Span, ast: Ast) -> BindingId {
-        let id = new_binding_id();
-        let binding = Rc::new(Binding {
-            name: name.clone(),
-            span: span,
-            id: id,
-            ast: ast,
-        });
-
-        self.by_name.borrow_mut().insert(name, binding.clone());
-        self.by_id.borrow_mut().insert(id, binding);
-
-        id
-    }
-
-    fn get(&self, id: BindingId) -> Rc<Binding> {
-        self.by_id.borrow()[&id].clone()
-    }
-
-    fn lookup(&self, name: &str) -> Option<Rc<Binding>> {
-        self.by_name
-            .borrow()
-            .get(name)
-            .cloned()
-            .or_else(|| self.parent.clone().and_then(|parent| parent.lookup(name)))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum Ast {
-    EmptyList(usize, Rc<Scope>, Span),
-
-    I64Literal(usize, Rc<Scope>, Span, i64),
-    BoolLiteral(usize, Rc<Scope>, Span, bool),
-
-    Atom(usize, Rc<Scope>, Span, String),
-    Inv(usize, Rc<Scope>, Span, Box<Ast>, Vec<Ast>),
-
-    Do(usize, Rc<Scope>, Span, Vec<Ast>),
-    // params, body
-    Fn(usize, Rc<Scope>, Span, Vec<(usize, BindingId)>, Vec<Ast>),
-    // (params, values), body
-    Let(usize, Rc<Scope>, Span, Vec<(usize, String, Ast)>, Vec<Ast>),
-    // condition, then-expr, else-expr
-    If(usize, Rc<Scope>, Span, Box<Ast>, Box<Ast>, Box<Ast>),
-}
-
-impl Ast {
-    fn id(&self) -> usize {
         match *self {
-            Ast::EmptyList(id, _, _) => id,
-            Ast::I64Literal(id, _, _, _) => id,
-            Ast::BoolLiteral(id, _, _, _) => id,
-            Ast::Atom(id, _, _, _) => id,
-            Ast::Inv(id, _, _, _, _) => id,
-            Ast::Do(id, _, _, _) => id,
-            Ast::Fn(id, _, _, _, _) => id,
-            Ast::Let(id, _, _, _, _) => id,
-            Ast::If(id, _, _, _, _, _) => id,
+            Void => t.is_empty(),
+            Type(id) => t.len() == 1 && t[0] == id,
+            Union(ref a) => t.len() == 1 && any(iproduct!(a, t).map(|(a, &t)| a.accepts(&[t])), id),
+            Concat(ref a) => {
+                t.len() == a.len() && all(zip(a, t).map(|(a, &t)| a.accepts(&[t])), id)
+            }
+            Star(ref a) => true, // right?
         }
     }
 }
 
-pub fn read(text: &str) -> Vec<Sexp> {
-    use read::{self, InputStream};
-
-    let mut env = Default::default();
-    let mut stream = InputStream::new(text.to_string());
-
-    read::read(&mut env, &mut stream).unwrap()
+pub enum Type {
+    Data(TypeId),
+    Fn {
+        id: TypeId,
+        args: Vec<Type>,
+        ret: Box<Type>,
+    },
 }
 
-pub fn separate_defs(sexps: Vec<Sexp>) -> Result<(Vec<Def>, Vec<Sexp>)> {
-    let (defs_, non_defs): (Vec<_>, Vec<_>) = sexps.into_iter().partition_map(|sexp| {
-        match sexp {
-            Sexp::List(id, span, mut sexps) => {
-                if if let Some(&Sexp::Atom(_, _, ref name)) = sexps.first() {
-                    name == "def"
-                } else {
-                    false
-                } {
-                    assert_eq!(sexps.len(), 3);
-                    let _def_symbol = sexps.remove(0);
-                    let name = sexps.remove(0);
-                    let rhs = sexps.remove(0);
-                    return Either::Left((span, name, rhs));
-                } else {
-                    Either::Right(Sexp::List(id, span, sexps))
+newtype_id!(TypeId);
+newtype_id!(FnId);
+newtype_id!(ExprId);
+newtype_id!(VarId);
+newtype_id!(DoNodeId);
+newtype_id!(CallNodeId);
+newtype_id!(LetNodeId);
+
+// enum TypeState {
+//     Unknown,
+//     Equiv(ExprId),
+//     Known(TypeId),
+// }
+
+struct Def {
+
+}
+
+pub struct DoNode {
+    body: Vec<Ast>,
+}
+pub struct CallNode {
+    args: Vec<Ast>,
+    fn_id: FnId,
+}
+pub struct LetNode {
+    args: Vec<(VarId, Ast)>,
+    body: Vec<Ast>,
+}
+pub struct FnDef {
+
+}
+
+pub type VarTable<'a> = TieredMap<'a, VarId, Value>;
+pub type DoNodeTable = HashMap<DoNodeId, DoNode>;
+pub type CallNodeTable = HashMap<CallNodeId, CallNode>;
+pub type LetNodeTable = HashMap<LetNodeId, LetNode>;
+pub type FnTable = HashMap<FnId, FnDef>;
+
+#[derive(Debug, Copy, Clone)]
+pub enum Ast {
+    Unit,
+    Num(i64),
+    Bool(bool),
+    FnPtr(FnId),
+    Var(VarId),
+    Do(DoNodeId),
+    Call(CallNodeId),
+    Let(LetNodeId),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum Value {
+    Unit,
+    Num(i64),
+    Bool(bool),
+    FnPtr(FnId),
+}
+
+pub struct ExecUnit<'a> {
+    var_env: VarTable<'a>,
+    asts: Vec<Ast>,
+    do_nodes: DoNodeTable,
+    call_nodes: CallNodeTable,
+    let_nodes: LetNodeTable,
+    fns: FnTable,
+}
+
+pub fn analyze(sexps: &[Sexp]) -> AResult<ExecUnit> {
+    newtype_id!(ExpId);
+
+    type VarTable = HashMap<String, VarId>;
+    type DoNodeTable = HashMap<DoNodeId, DoNode>;
+    type CallNodeTable = HashMap<CallNodeId, CallNode>;
+    type LetNodeTable = HashMap<LetNodeId, LetNode>;
+    type FnTable = HashMap<FnId, FnDef>;
+    type FnEnv = HashMap<String, FnId>;
+
+
+    // "pre-ast"
+    enum Exp {
+        Unit(ExpId),
+        Num(ExpId, i64),
+        Bool(ExpId, bool),
+        Atom(ExpId, String),
+        Fn(ExpId, FnId),
+        Do(ExpId, DoNodeId),
+        Call(ExpId, CallNodeId),
+        Let(ExpId, LetNodeId),
+    }
+
+    impl Exp {
+        fn id(&self) -> ExpId {
+            match *self {
+                Exp::Atom(id, ..) |
+                Exp::Bool(id, ..) |
+                Exp::Call(id, ..) |
+                Exp::Do(id, ..) |
+                Exp::Fn(id, ..) |
+                Exp::Let(id, ..) |
+                Exp::Num(id, ..) |
+                Exp::Unit(id, ..) => id,
+            }
+        }
+    }
+
+    struct DoNode {
+        body: Vec<Exp>,
+    }
+    struct CallNode {
+        args: Vec<Exp>,
+        fn_id: FnId,
+    }
+    impl CallNode {
+        fn return_type_id(&self) -> TypeId {
+            unimplemented!()
+        }
+    }
+    struct LetNode(Vec<(String, Exp)>, Vec<Exp>);
+    struct FnDef;
+    impl FnDef {
+        fn id(&self) -> FnId {
+            unimplemented!()
+        }
+        fn arg_type_ids(&self) -> &[TypeId] {
+            unimplemented!()
+        }
+    }
+
+    fn sexp_to_exp(sexp: &Sexp,
+                   do_nodes: &mut DoNodeTable,
+                   call_nodes: &mut CallNodeTable,
+                   let_nodes: &mut LetNodeTable,
+                   fns: &mut FnTable,
+                   fn_env: &mut FnEnv)
+                   -> AResult<Exp> {
+
+        use std::ops::Index;
+        use std::hash::Hash;
+
+        trait IdTable<K, V> {
+            fn get(&self, key: K) -> Option<&V>;
+            fn insert_node(&mut self, val: V) -> K;
+        }
+
+        impl<K, V> Index<K> for IdTable<K, V> {
+            type Output = V;
+            fn index(&self, idx: K) -> &V {
+                self.get(idx).expect("Key not in table!")
+            }
+        }
+
+        impl<K, V> IdTable<K, V> for HashMap<K, V>
+            where K: Eq + Hash + Copy + From<usize>
+        {
+            fn get(&self, key: K) -> Option<&V> {
+                self.get(&key)
+            }
+
+            fn insert_node(&mut self, val: V) -> K {
+                let key = self.len().into();
+                self.insert(key, val);
+                key
+            }
+        }
+
+        let id = sexp.id().into();
+
+        match *sexp {
+            Sexp::Atom(_, _, ref s) => {
+                s.parse().map(|n| Exp::Num(id, n)).or_else(|_| Ok(Exp::Atom(id, s.to_owned())))
+            }
+            Sexp::List(_, _, ref sexps) => {
+                match sexps.split_first() {
+                    None => Ok(Exp::Unit(id)),
+                    Some((&Sexp::List(_, _, ref children), args)) => {
+                        Ok(Exp::Call(id,
+                                     call_nodes.insert_node(CallNode {
+                                         fn_id: unimplemented!(),
+                                         args: unimplemented!(),
+                                     })))
+                    }
+                    Some((&Sexp::Atom(_, _, ref callee), args)) => {
+                        match &**callee {
+                            "let" => {
+                                // args = (k v k v k v) <body>
+                                // let (params, body) = try!(args.split_first().ok_or_else(|| ));
+                                // Ok(Exp::Let(insert_node(LetNode(params, body), let_nodes)))
+                                unimplemented!()
+                            }
+                            "do" => {
+                                let body = sexps_to_exps(args,
+                                                         do_nodes,
+                                                         call_nodes,
+                                                         let_nodes,
+                                                         fns,
+                                                         fn_env)?;
+                                let do_id = do_nodes.insert_node(DoNode { body: body });
+                                Ok(Exp::Do(id, do_id))
+                            }
+                            "fn" => {
+                                // perform lambda lifting here
+                                let fn_def = unimplemented!();
+                                let fn_id = fns.insert_node(fn_def);
+                                Ok(Exp::Fn(id, fn_id))
+                            }
+                            callee => {
+                                let fn_id = match fn_env.get(callee) {
+                                    Some(&fn_id) => fn_id,
+                                    _ => {
+                                        return Err(format!("Callee not in scope: {}", callee)
+                                            .into())
+                                    }
+                                };
+                                let args = sexps_to_exps(args,
+                                                         do_nodes,
+                                                         call_nodes,
+                                                         let_nodes,
+                                                         fns,
+                                                         fn_env)?;
+                                let fn_def = &fns[&fn_id];
+                                let call_id = call_nodes.insert_node(CallNode {
+                                    fn_id: fn_id,
+                                    args: args,
+                                });
+                                Ok(Exp::Call(id, call_id))
+                            }
+                        }
+                    }
                 }
             }
-            _ => Either::Right(sexp),
         }
-    });
+    }
 
-    let mut defs = Vec::with_capacity(defs_.len());
+    fn sexps_to_exps(sexps: &[Sexp],
+                     do_nodes: &mut DoNodeTable,
+                     call_nodes: &mut CallNodeTable,
+                     let_nodes: &mut LetNodeTable,
+                     fns: &mut FnTable,
+                     fn_env: &mut FnEnv)
+                     -> AResult<Vec<Exp>> {
+        sexps.iter()
+            .map(|sexp| sexp_to_exp(sexp, do_nodes, call_nodes, let_nodes, fns, fn_env))
+            .collect()
+    }
 
-    for (span, name_sexp, rhs_sexp) in defs_ {
-        let name = match name_sexp {
-            Sexp::Atom(_, _, string) => string,
-            _ => return Err(format!("First arg of `def` must be a symbol: {:?}", name_sexp).into()),
+    newtype_id!(VarId);
+
+    fn infer(exps: &[Exp],
+             do_nodes: &mut DoNodeTable,
+             call_nodes: &mut CallNodeTable,
+             let_nodes: &mut LetNodeTable,
+             fns: &mut FnTable,
+             vars: &mut VarTable)
+             -> AResult<Vec<Ast>> {
+        use ena::unify::*;
+
+        newtype_id!(TypeKey);
+
+        impl UnifyKey for TypeKey {
+            type Value = TypeState;
+            fn index(&self) -> u32 {
+                self.0 as u32
+            }
+            fn from_index(u: u32) -> Self {
+                (u as usize).into()
+            }
+            fn tag() -> &'static str {
+                stringify!(TypeKey)
+            }
+        }
+
+        #[derive(Clone, Copy, Debug)]
+        pub enum TypeState {
+            Unknown,
+            Known(TypeId),
+        }
+
+        impl UnifyValue for TypeState {
+            fn unify_values(&a: &Self, &b: &Self) -> Result<Self, (Self, Self)> {
+                match (a, b) {
+                    (TypeState::Unknown, b) => Ok(b),
+                    (a, TypeState::Unknown) => Ok(a),
+                    (TypeState::Known(a_id), TypeState::Known(b_id)) => {
+                        if a_id == b_id {
+                            Ok(a)
+                        } else {
+                            Err((a, b))
+                        }
+                    }
+                }
+            }
+        }
+
+        enum Constraint {
+            NodeNode(ExpId, ExpId),
+            NodeType(ExpId, TypeId),
+            NodeVar(ExpId, VarId),
+        }
+
+        #[derive(Copy, Clone)]
+        struct Context<'a> {
+            do_nodes: &'a DoNodeTable,
+            call_nodes: &'a CallNodeTable,
+            let_nodes: &'a LetNodeTable,
+            fns: &'a FnTable,
+        }
+
+        fn gen_constraints(exps: &[Exp], cxt: Context, vars: &mut VarTable) -> Vec<Constraint> {
+
+            fn gen(exp: &Exp,
+                   cxt: Context,
+                   constraints: &mut Vec<Constraint>,
+                   vars: &mut VarTable) {
+
+                const UNIT_TYPEID: TypeId = TypeId(0); // Known(Unit)
+                const BOOL_TYPEID: TypeId = TypeId(1); // Known(Bool)
+                const NUM_TYPEID: TypeId = TypeId(2); // Known(Num)
+
+                match *exp {
+                    Exp::Unit(id) => constraints.push(Constraint::NodeType(id, UNIT_TYPEID)),
+                    Exp::Bool(id, _) => constraints.push(Constraint::NodeType(id, BOOL_TYPEID)),
+                    Exp::Num(id, _) => constraints.push(Constraint::NodeType(id, NUM_TYPEID)),
+                    Exp::Atom(id, ref s) => {
+                        constraints.push(Constraint::NodeVar(id, vars.get(s).cloned().unwrap()));
+                    }
+
+                    Exp::Do(id, node) => {
+                        let node = &cxt.do_nodes[&node];
+                        let constraint = match node.body.last() {
+                            Some(exp) => Constraint::NodeNode(id, exp.id()),
+                            _ => Constraint::NodeType(id, UNIT_TYPEID),
+                        };
+
+                        constraints.push(constraint);
+                    }
+                    Exp::Call(id, node) => {
+                        let node = &cxt.call_nodes[&node];
+                        let fn_def = &cxt.fns[&node.fn_id];
+
+                        constraints.push(Constraint::NodeType(id, node.return_type_id()));
+                        for (arg, &arg_type_id) in node.args.iter().zip(fn_def.arg_type_ids()) {
+                            constraints.push(Constraint::NodeType(arg.id(), arg_type_id));
+                        }
+                    }
+                    Exp::Let(id, node) => {
+                        let node = &cxt.let_nodes[&node];
+                        unimplemented!()
+                    }
+                    Exp::Fn(id, node) => {
+                        //
+                        unimplemented!()
+                    }
+                }
+            }
+
+            let mut constraints = vec![];
+
+            for exp in exps {
+                gen(exp, cxt, &mut constraints, vars);
+            }
+
+            constraints
+        }
+        // let mut utable = UnificationTable::<TypeKey>::new();
+        //
+        // let key = utable.new_key(TypeState::Unknown);
+        //
+        // println!("K: {:?}, V: {:?}", key, utable.probe_value(key));
+        //
+        // let do_nodes = ();
+        //
+
+        // generate constraint set
+        let cxt = Context {
+            do_nodes: do_nodes,
+            call_nodes: call_nodes,
+            let_nodes: let_nodes,
+            fns: fns,
         };
 
-        defs.push(Def(span, name, rhs_sexp));
+        let constraints = gen_constraints(exps, cxt, vars);
+
+        unimplemented!()
+    }
+
+
+    let mut do_nodes = DoNodeTable::new();
+    let mut call_nodes = CallNodeTable::new();
+    let mut let_nodes = LetNodeTable::new();
+    let mut fns = FnTable::new();
+    let mut fn_env = FnEnv::new();
+    let mut vars = VarTable::new();
+
+    let (defs, non_defs) = separate_defs(sexps)?;
+
+    let exps: Vec<_> = try!(non_defs.into_iter()
+        .map(|sexp| {
+            sexp_to_exp(sexp,
+                        &mut do_nodes,
+                        &mut call_nodes,
+                        &mut let_nodes,
+                        &mut fns,
+                        &mut fn_env)
+        })
+        .collect());
+
+
+    let asts = infer(&*exps,
+                     &mut do_nodes,
+                     &mut call_nodes,
+                     &mut let_nodes,
+                     &mut fns,
+                     &mut vars)?;
+
+    Ok(unimplemented!())
+    // Ok(ExecUnit {
+    //     var_env: var_env,
+    //     asts: asts,
+    //     do_nodes: do_nodes,
+    //     call_nodes: call_nodes,
+    //     let_nodes: let_nodes,
+    //     fns: fns,
+    // })
+}
+
+fn sexp_to_ast(sexp: &Sexp) -> Ast {
+    match *sexp {
+        Sexp::Atom(id, span, ref s) => {
+            match s.parse() {
+                Ok(n) => Ast::Num(n),
+                _ => Ast::Var(id.into()),
+            }
+        }
+        Sexp::List(id, span, ref sexps) => unimplemented!(),
+    }
+}
+
+fn separate_defs(sexps: &[Sexp]) -> AResult<(Vec<&Sexp>, Vec<&Sexp>)> {
+    let mut defs = vec![];
+    let mut non_defs = vec![];
+
+    for sexp in sexps {
+        match *sexp {
+            Sexp::List(id, span, ref s) => {
+                if !s.is_empty() && s[0].is_atom_of("def") {
+                    defs.push(sexp);
+                } else {
+                    non_defs.push(sexp);
+                }
+            }
+            _ => non_defs.push(sexp),
+        }
     }
 
     Ok((defs, non_defs))
 }
 
-pub fn process_defs(global_scope: Rc<Scope>, defs: Vec<Def>) -> (Env, Table<BindingId, TypedAst>) {
-    use petgraph::Graph;
+pub fn interpret(program: &ExecUnit) -> String {
 
-    fn get_deps(ast: &Ast) -> Vec<BindingId> {
-        match *ast {
-            Ast::Atom(_, ref scope, _, ref string) => {
-                vec![scope.lookup(&**string).expect("oops").id]
-            }
-            Ast::BoolLiteral(..) |
-            Ast::EmptyList(..) |
-            Ast::I64Literal(..) => vec![],
-            Ast::Fn(_, _, _, ref params, ref body) => {
-                let params = params.into_iter()
-                                   .map(|&(_, binding_id)| binding_id)
-                                   .collect::<HashSet<_>>();
-
-                body.into_iter()
-                    .flat_map(|ast| get_deps(ast).into_iter())
-                    .filter(|id| !params.contains(id))
-                    .collect()
-            }
-            _ => panic!("get_deps: unimpl: {:#?}", ast),
+    fn print_value(val: &Value) -> String {
+        match *val {
+            Value::Unit => String::from("()"),
+            Value::Bool(v) => format!("{}", v),
+            Value::Num(v) => format!("{}", v),
+            Value::FnPtr(v) => format!("<fn {}>", v.0),
         }
     }
 
-    let mut env = Env::new();
-    let mut binding_id_to_node_idx = Table::new();
-    let mut def_graph = Graph::<_, ()>::new();
-
-    for Def(span, name, sexp) in defs {
-        let ast = sexp_to_ast(global_scope.clone(), sexp).unwrap();
-        let (id, ty) = match ast {
-            Ast::I64Literal(id, _, _, _) => (id, TypeTerm::Known(Type::I64)),
-            Ast::BoolLiteral(id, _, _, _) => (id, TypeTerm::Known(Type::Bool)),
-            Ast::Atom(id, _, _, _) => (id, TypeTerm::Unknown),
-            Ast::Fn(id, _, _, ref params, ref body) => {
-                (id,
-                 TypeTerm::FnInProgress(params.into_iter().map(|&(id, _)| id).collect(),
-                                        body.last().unwrap().id()))
-            }
-            _ => unimplemented!(),
-        };
-
-        let binding_id = global_scope.add_binding(name.clone(), span, ast);
-        let node_idx = def_graph.add_node(binding_id);
-
-        binding_id_to_node_idx.insert(binding_id, node_idx);
-        env.insert(id, Var::new(ty));
+    #[derive(Clone, Copy)]
+    struct Context<'a> {
+        do_nodes: &'a DoNodeTable,
+        call_nodes: &'a CallNodeTable,
+        let_nodes: &'a LetNodeTable,
+        fns: &'a FnTable,
     }
 
-    for idx in def_graph.node_indices() {
-        for id in get_deps(&global_scope.get(def_graph[idx]).ast) {
-            let dep_idx = binding_id_to_node_idx[&id];
-            def_graph.add_edge(idx, dep_idx, ());
-        }
-    }
-
-    for scc in petgraph::algo::scc(&def_graph) {
-        if scc.len() > 1 {
-            panic!("Cyclic dependency: {:?}",
-                   scc.into_iter()
-                      .map(|idx| global_scope.get(def_graph[idx]).name.clone())
-                      .collect_vec());
-        }
-    }
-
-    let (nodes, _) = def_graph.into_nodes_edges();
-    let (ids, asts): (Vec<_>, _) = nodes.into_iter()
-                                        .map(|node| {
-                                            (node.weight, global_scope.get(node.weight).ast.clone())
-                                        })
-                                        .unzip();
-    println!("Asts: {:#?}", asts);
-    let asts = type_infer(&mut env, asts);
-
-    (env, ids.into_iter().zip(asts).collect())
-}
-
-pub fn sexp_to_ast(scope: Rc<Scope>, sexp: Sexp) -> Result<Ast> {
-    match sexp {
-        Sexp::Atom(id, span, string) => {
-            match string.parse::<i64>() {
-                Ok(val) => Ok(Ast::I64Literal(id, scope.clone(), span, val)),
-                _ => {
-                    if string == "true" {
-                        Ok(Ast::BoolLiteral(id, scope.clone(), span, true))
-                    } else if string == "false" {
-                        Ok(Ast::BoolLiteral(id, scope.clone(), span, false))
-                    } else {
-                        Ok(Ast::Atom(id, scope.clone(), span, string))
-                    }
-                }
-            }
-        }
-        Sexp::List(id, span, mut sexps) => {
-            match sexps.len() {
-                0 => Ok(Ast::EmptyList(id, scope.clone(), span)),
-                _ => {
-                    let first = sexps.remove(0);
-
-                    match first {
-                        Sexp::Atom(_, _, ref s) if s == "ns" => {
-                            // set current ns
-                            // Ok(None)
-                            unimplemented!()
-                        }
-                        Sexp::Atom(_, _, ref s) if s == "use" => {
-                            // import names
-                            // Ok(None)
-                            unimplemented!()
-                        }
-                        Sexp::Atom(_, _, ref s) if s == "do" => {
-                            assert!(sexps.len() > 0);
-
-                            let body = try!(sexps.into_iter()
-                                                 .map(|sexp| sexp_to_ast(scope.clone(), sexp))
-                                                 .fold_results(vec![], vec_collector));
-
-                            Ok(Ast::Do(id, scope.clone(), span, body))
-                        }
-                        Sexp::Atom(_, _, ref s) if s == "if" => {
-                            assert_eq!(sexps.len(), 3);
-
-                            let cond_expr = try!(sexp_to_ast(scope.clone(), sexps.remove(0)));
-                            let then_expr = try!(sexp_to_ast(scope.clone(), sexps.remove(0)));
-                            let else_expr = try!(sexp_to_ast(scope.clone(), sexps.remove(0)));
-
-                            Ok(Ast::If(id,
-                                       scope.clone(),
-                                       span,
-                                       Box::new(cond_expr),
-                                       Box::new(then_expr),
-                                       Box::new(else_expr)))
-                        }
-                        Sexp::Atom(_, _, ref s) if s == "let" => {
-                            assert!(sexps.len() >= 2);
-
-                            let inner_scope = Scope::child_of(scope.clone());
-                            let binding_list_src = match sexps.remove(0) {
-                                Sexp::List(_, _, sexps) => {
-                                    assert!(sexps.len() % 2 == 0);
-
-                                    sexps.into_iter()
-                                         .chunks_lazy(2)
-                                         .into_iter()
-                                         .map(|mut chunk| {
-                                             let (param_id, param_span, param_name) = {
-                                                 match chunk.next().unwrap() {
-                                                     Sexp::Atom(id, span, string) => {
-                                                         (id, span, string)
-                                                     }
-                                                     _ => panic!("param must be Atom"),
-                                                 }
-                                             };
-                                             let value = chunk.next().unwrap();
-
-                                             (param_id, param_span, param_name, value)
-                                         })
-                                         .collect_vec()
-                                }
-                                _ => panic!("First arg of `let` must be a list"),
-                            };
-
-                            let mut binding_list = vec![];
-
-                            for (id, span, name, value_sexp) in binding_list_src {
-                                let value = try!(sexp_to_ast(inner_scope.clone(), value_sexp));
-                                scope.add_binding(name.clone(), span, value.clone());
-                                binding_list.push((id, name, value));
-                            }
-
-                            let body_asts = try!(sexps.into_iter()
-                                                      .map(|sexp| {
-                                                          sexp_to_ast(inner_scope.clone(), sexp)
-                                                      })
-                                                      .fold_results(vec![], vec_collector));
-
-                            Ok(Ast::Let(id, scope.clone(), span, binding_list, body_asts))
-                        }
-                        Sexp::Atom(_, _, ref s) if s == "fn" => {
-                            assert!(sexps.len() >= 2);
-
-                            let inner_scope = Scope::child_of(scope.clone());
-                            let params_list = match sexps.remove(0) {
-                                Sexp::List(_, _, sexps) => {
-                                    sexps.into_iter()
-                                         .map(|sexp| match sexp.clone() {
-                                             Sexp::Atom(id, span, string) => {
-                                                 let ast = try!(sexp_to_ast(inner_scope.clone(),
-                                                                            sexp));
-                                                 let binding_id = inner_scope.add_binding(string,
-                                                                                          span,
-                                                                                          ast);
-
-                                                 Ok((id, binding_id))
-                                             }
-                                             _ => Err("param must be Atom".into()),
-                                         })
-                                         .fold_results(vec![], vec_collector)
-                                }
-                                _ => Err("First arg of `fn` must be a list".into()),
-                            };
-
-                            let params_list = match params_list {
-                                Ok(v) => v,
-                                Err(e) => return Err(e),
-                            };
-
-                            let body_asts = try!(sexps.into_iter()
-                                                      .map(|sexp| {
-                                                          sexp_to_ast(inner_scope.clone(), sexp)
-                                                      })
-                                                      .fold_results(vec![], vec_collector));
-
-                            // TODO (NOW): lambda lifting
-                            // what is needed in a fn prototype?
-
-
-                            Ok(Ast::Fn(id, scope.clone(), span, params_list, body_asts))
-                        }
-                        Sexp::Atom(_, _, ref s) if s == "def" => unreachable!(),
-                        Sexp::Atom(_, _, ref s) if s == "defreader" => unreachable!(),
-                        _ => {
-                            Ok(Ast::Inv(id,
-                                        scope.clone(),
-                                        span,
-                                        Box::new(try!(sexp_to_ast(scope.clone(), first))),
-                                        try!(sexps.into_iter()
-                                                  .map(|sexp| sexp_to_ast(scope.clone(), sexp))
-                                                  .fold_results(vec![], vec_collector))))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum TypedAst {
-    EmptyList,
-    I64Literal(i64),
-    BoolLiteral(bool),
-
-    Atom(Type, BindingId),
-    Inv(Type, Box<TypedAst>, Vec<TypedAst>),
-
-    Do(Type, Vec<TypedAst>),
-    // params, body
-    Fn(Type, Vec<Rc<Binding>>, Vec<TypedAst>),
-    // (params, values), body
-    Let(Type, Vec<(BindingId, TypedAst)>, Vec<TypedAst>),
-    // condition, then-expr, else-expr
-    If(Type, Box<TypedAst>, Box<TypedAst>, Box<TypedAst>),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum TypeTerm {
-    Unknown,
-    Known(Type),
-    FnInProgress(Vec<usize>, usize),
-}
-
-type Var = UnionFindNode<TypeTerm>;
-
-#[derive(Debug)]
-pub struct Env {
-    id_to_var: Table<usize, Var>,
-    string_to_id: Table<String, usize>,
-}
-
-impl Env {
-    fn new() -> Self {
-        Env {
-            id_to_var: Table::new(),
-            string_to_id: Table::new(),
-        }
-    }
-
-    fn get(&self, id: usize) -> &Var {
-        &self.id_to_var[&id]
-    }
-
-    fn insert(&mut self, id: usize, var: Var) {
-        self.id_to_var.insert(id, var);
-    }
-
-    fn remove(&mut self, id: usize) -> Var {
-        self.id_to_var.remove(&id).unwrap()
-    }
-
-    fn map_values<F>(&mut self, a: usize, b: usize, f: F)
-        where F: Fn(Var, Var) -> (Var, Var)
-    {
-        assert!(a != b);
-        let a_var = self.remove(a);
-        let b_var = self.remove(b);
-        let (a_var, b_var) = f(a_var, b_var);
-        self.insert(a, a_var);
-        self.insert(b, b_var);
-    }
-
-    fn lookup_type(&self, id: usize) -> Option<Type> {
-        fn resolve(env: &Env, id: usize, v: &Var) -> Option<Type> {
-            v.with_data(|term| {
-                let ty = match *term {
-                    TypeTerm::Known(ref ty) => Some(ty.clone()),
-                    TypeTerm::FnInProgress(ref args, ret) => {
-                        let args = args.iter()
-                                       .map(|&arg| {
-                                           let arg = env.get(arg);
-                                           resolve(env, id, arg).unwrap()
-                                       })
-                                       .collect();
-
-                        let ret = env.get(ret);
-                        let ret = resolve(env, id, ret).unwrap();
-                        Some(Type::Fn(args, Box::new(ret)))
-                    }
-                    TypeTerm::Unknown => None,
-                };
-
-                if ty.is_some() {
-                    *term = TypeTerm::Known(ty.clone().unwrap());
-                }
-
-                ty
-            })
-        }
-
-        resolve(self, id, self.get(id))
-    }
-}
-
-/// TODO: replace with constraint version
-pub fn type_infer(env: &mut Env, asts: Vec<Ast>) -> Vec<TypedAst> {
-
-    fn fresh() -> Var {
-        UnionFindNode::new(TypeTerm::Unknown)
-    }
-
-    fn known(ty: Type) -> Var {
-        UnionFindNode::new(TypeTerm::Known(ty))
-    }
-
-    fn inner_unif(a: TypeTerm, b: TypeTerm) -> TypeTerm {
-        match (a, b) {
-            (TypeTerm::Unknown, b) => b,
-            (a, TypeTerm::Unknown) => a,
-            (TypeTerm::FnInProgress(_arg_types, _ret_type), TypeTerm::Known(_b)) => unimplemented!(),
-            (TypeTerm::Known(_a), TypeTerm::FnInProgress(_arg_types, _ret_type)) => unimplemented!(),
-            (a, b) => {
-                if a != b {
-                    panic!("Mismatched types: {:?} and {:?}", a, b);
-                }
-                a
-            }
-        }
-    }
-
-    fn unify(env: &mut Env, a: usize, b: usize) {
-        env.map_values(a, b, |mut av, mut bv| {
-            av.union_with(&mut bv, inner_unif);
-            (av, bv)
-        });
-    }
-
-    enum WalkId {
-        Simple(usize),
-        Fn(Vec<usize>, usize),
-    }
-
-    fn walk(env: &mut Env, ast: &Ast) -> WalkId {
-        match *ast {
-            Ast::Atom(id, ref scope, _span, ref string) => {
-                match scope.lookup(&**string) {
-                    Some(binding) => {
-                        let term = env.lookup_type(binding.ast.id())
-                                      .map(known)
-                                      .unwrap_or_else(fresh);
-                        env.insert(binding.ast.id(), term);
-                        env.insert(id, fresh());
-                        unify(env, binding.ast.id(), id);
-                    }
-                    _ => {
-                        env.insert(id, fresh());
-                    }
-                }
-
-                WalkId::Simple(id)
-            }
-            Ast::BoolLiteral(id, ref _scope, _span, _val) => {
-                env.insert(id, known(Type::Bool));
-                WalkId::Simple(id)
-            }
-            Ast::Do(id, ref _scope, _span, ref children) => {
-                let (last, rest) = children.split_last().unwrap();
-
-                for ast in rest {
-                    walk(env, ast);
-                }
-
-                walk(env, last);
-
-                env.insert(id, fresh());
-                unify(env, id, last.id());
-                WalkId::Simple(id)
-            }
-            Ast::EmptyList(id, ref _scope, _span) => {
-                env.insert(id, known(Type::Unit));
-                WalkId::Simple(id)
-            }
-            Ast::Fn(id, ref _scope, _span, ref params, ref body) => {
-                let param_ids = params.into_iter().map(|&(id, _)| id).collect_vec();
-
-                for &id in &*param_ids {
-                    env.insert(id, fresh());
-                }
-
-                let (last, rest) = body.split_last().unwrap();
-
-                for ast in rest {
-                    walk(env, ast);
-                }
-
-                walk(env, last);
-
-                env.insert(id,
-                           Var::new(TypeTerm::FnInProgress(param_ids.clone(), last.id())));
-
-                WalkId::Fn(param_ids, last.id())
-            }
-            Ast::I64Literal(id, ref _scope, _span, _val) => {
-                env.insert(id, known(Type::I64));
-                WalkId::Simple(id)
-            }
-            Ast::If(id, ref _scope, _span, ref cond_ast, ref then_ast, ref else_ast) => {
-                walk(env, cond_ast);
-
-                if env.lookup_type(cond_ast.id()).unwrap() != Type::Bool {
-                    panic!("Condition of `if` expression must be of type Bool");
-                }
-
-                walk(env, then_ast);
-                walk(env, else_ast);
-
-                if env.lookup_type(then_ast.id()) != env.lookup_type(else_ast.id()) {
-                    panic!("Branches of `if` expression must have same type");
-                }
-
-                env.insert(id, fresh());
-                unify(env, id, then_ast.id());
-                unify(env, id, else_ast.id());
-                WalkId::Simple(id)
-            }
-            Ast::Inv(id, ref _scope, _span, ref callee, ref args) => {
-
-                // match **callee {
-                //     Ast::Fn(id, ref scope, _span, ref params, ref body) => unimplemented!(),
-                //     Ast::Atom(id, ref scope, _span, ref string) => unimplemented!(),
-                //     _ => panic!("walk -> Ast::Inv"),
-                // }
-
-
-                let (arg_ids, ret_id) = match walk(env, callee) {
-                    WalkId::Fn(arg_ids, ret_id) => (arg_ids, ret_id),
-                    WalkId::Simple(id) => {
-                        //
-                        unimplemented!()
-                    }
-                    // _ => panic!("Invocation of non-fn: {:#?}", callee),
-                };
-
-                for (arg, arg_receptor_id) in args.into_iter().zip(arg_ids.into_iter()) {
-                    walk(env, arg);
-                    unify(env, arg.id(), arg_receptor_id);
-                }
-
-                env.insert(id, fresh());
-                unify(env, id, ret_id);
-                WalkId::Simple(id)
-            }
-            Ast::Let(id, ref _scope, _span, ref bindings, ref body) => {
-                for &(id, ref _name, ref ast) in bindings {
-                    walk(env, ast);
-
-                    env.insert(id, fresh());
-                    unify(env, id, ast.id());
-                }
-
-                let (last, rest) = body.split_last().unwrap();
-
-                for ast in rest {
-                    walk(env, ast);
-                }
-
-                walk(env, last);
-
-                env.insert(id, fresh());
-                unify(env, id, last.id());
-                WalkId::Simple(id)
-            }
-        }
-    }
-
-    fn to_typed(env: &Env, ast: Ast) -> TypedAst {
-        match ast {
-            Ast::Atom(id, scope, _, string) => {
-                TypedAst::Atom(env.lookup_type(id).unwrap(),
-                               scope.lookup(&*string).unwrap().id)
-            }
-            Ast::BoolLiteral(_, _, _, val) => TypedAst::BoolLiteral(val),
-            Ast::Do(id, _, _, children) => {
-                TypedAst::Do(env.lookup_type(id).unwrap(),
-                             children.into_iter().map(|ast| to_typed(env, ast)).collect())
-            }
-            Ast::EmptyList(..) => TypedAst::EmptyList,
-            Ast::Fn(id, scope, _span, params, body) => {
-                TypedAst::Fn(env.lookup_type(id).unwrap(),
-                             params.into_iter()
-                                   .map(|(_, binding_id)| scope.get(binding_id))
-                                   .collect(),
-                             body.into_iter().map(|ast| to_typed(env, ast)).collect())
-            }
-            Ast::I64Literal(_, _, _, val) => TypedAst::I64Literal(val),
-            Ast::If(id, _scope, _span, cond_ast, then_ast, else_ast) => {
-                let cond_ast = Box::new(to_typed(env, *cond_ast));
-                let then_ast = Box::new(to_typed(env, *then_ast));
-                let else_ast = Box::new(to_typed(env, *else_ast));
-
-                TypedAst::If(env.lookup_type(id).unwrap(), cond_ast, then_ast, else_ast)
-            }
-            Ast::Inv(id, _scope, _span, callee, args) => {
-                TypedAst::Inv(env.lookup_type(id).unwrap(),
-                              Box::new(to_typed(env, *callee)),
-                              args.into_iter().map(|arg| to_typed(env, arg)).collect())
-            }
-            Ast::Let(id, scope, _, bindings, body) => {
-                TypedAst::Let(env.lookup_type(id).unwrap(),
-                              bindings.into_iter()
-                                      .map(|(_, string, ast)| {
-                                          (scope.lookup(&*string).unwrap().id, to_typed(env, ast))
-                                      })
-                                      .collect(),
-                              body.into_iter().map(|ast| to_typed(env, ast)).collect())
-            }
-        }
-    }
-
-    for ast in &asts {
-        walk(env, ast);
-    }
-
-    asts.into_iter().map(|ast| to_typed(env, ast)).collect()
-}
-
-pub fn interpret(consts: &Table<BindingId, TypedAst>, asts: &[TypedAst]) -> String {
-    use std::collections::VecDeque;
-
-    #[derive(Clone, Debug)]
-    enum Value<'a> {
-        Unit,
-        I64(i64),
-        Bool(bool),
-        Fn(&'a [Rc<Binding>], &'a [TypedAst]),
-    }
-
-    impl<'a> Display for Value<'a> {
-        fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-            match *self {
-                Value::Unit => write!(f, "()"),
-                Value::I64(val) => write!(f, "{}", val),
-                Value::Bool(val) => write!(f, "{}", val),
-                Value::Fn(..) => write!(f, "<fn>"),
-            }
-        }
-    }
-
-    fn init_env(consts: &Table<BindingId, TypedAst>) -> Table<BindingId, Value> {
-        let mut env = Table::new();
-        let mut open_set = consts.into_iter().collect::<VecDeque<_>>();
-
-        while let Some((id, elem)) = open_set.pop_front() {
-            match *elem {
-                TypedAst::Atom(_, inner_id) => {
-                    if env.contains_key(&inner_id) {
-                        let val = interpret_(&env, elem);
-                        env.insert(*id, val);
-                    } else {
-                        open_set.push_back((id, elem));
-                    }
-                }
-                _ => {
-                    let val = interpret_(&env, elem);
-                    env.insert(*id, val);
-                }
-            }
-        }
-
-        env
-    }
-
-    fn run_do<'a>(env: &Table<BindingId, Value<'a>>, body: &'a [TypedAst]) -> Value<'a> {
+    fn run_do(cxt: Context, vars: &VarTable, body: &[Ast]) -> Value {
         let (last, rest) = body.split_last().unwrap();
 
         for ast in rest {
-            interpret_(&env, ast);
+            interpret_(cxt, vars, ast);
         }
 
-        interpret_(&env, last)
+        interpret_(cxt, vars, last)
     }
 
-    fn interpret_<'a>(env: &Table<BindingId, Value<'a>>, ast: &'a TypedAst) -> Value<'a> {
+    fn run_let(cxt: Context, vars: &VarTable, node: &LetNode) -> Value {
+
+        let mut vars = vars.new_scope();
+
+        for &(label, arg) in &node.args {
+            let val = interpret_(cxt, &vars, &arg);
+            vars.insert(label, val);
+        }
+
+        run_do(cxt, &vars, &*node.body)
+    }
+
+    fn run_call(cxt: Context, vars: &VarTable, node: &CallNode) -> Value {
+        unimplemented!()
+    }
+
+    fn interpret_<'a>(cxt: Context, vars: &VarTable<'a>, ast: &'a Ast) -> Value {
         match *ast {
-            TypedAst::Atom(_, id) => env[&id].clone(),
-            TypedAst::BoolLiteral(val) => Value::Bool(val),
-            TypedAst::Do(_, ref body) => run_do(env, &**body),
-            TypedAst::EmptyList => Value::Unit,
-            TypedAst::Fn(_, ref param_bindings, ref body) => Value::Fn(&**param_bindings, &**body),
-            TypedAst::I64Literal(val) => Value::I64(val),
-            TypedAst::If(_, ref cond_ast, ref then_ast, ref else_ast) => {
-                match interpret_(env, &*cond_ast) {
-                    Value::Bool(true) => interpret_(env, &*then_ast),
-                    Value::Bool(false) => interpret_(env, &*else_ast),
-                    _ => unreachable!(),
-                }
-            }
-            TypedAst::Inv(_, ref callee, ref args) => {
-                match interpret_(env, callee) {
-                    Value::Fn(param_bindings, body) => {
-                        let mut env = env.clone();
-
-                        for (binding, arg) in param_bindings.into_iter().zip(args.into_iter()) {
-                            let id = binding.id;
-                            let val = interpret_(&env, arg);
-                            env.insert(id, val);
-                        }
-
-                        run_do(&env, &*body)
-                    }
-                    _ => panic!(),
-                }
-            }
-            TypedAst::Let(_, ref bindings, ref body) => {
-                let mut env = env.clone();
-
-                for &(id, ref ast) in bindings {
-                    let val = interpret_(&env, &ast);
-                    env.insert(id, val);
-                }
-
-                run_do(&env, &*body)
-            }
+            Ast::Unit => Value::Unit,
+            Ast::Num(val) => Value::Num(val),
+            Ast::Bool(val) => Value::Bool(val),
+            Ast::FnPtr(fn_id) => Value::FnPtr(fn_id),
+            Ast::Var(ref var_id) => vars[var_id],
+            Ast::Do(id) => run_do(cxt, vars, &*cxt.do_nodes[&id].body),
+            Ast::Call(id) => run_call(cxt, vars, &cxt.call_nodes[&id]),
+            Ast::Let(id) => run_let(cxt, vars, &cxt.let_nodes[&id]),
         }
     }
 
-    let env = init_env(consts);
-    let result = run_do(&env, asts);
-    format!("{}", result)
+    let cxt = Context {
+        do_nodes: &program.do_nodes,
+        call_nodes: &program.call_nodes,
+        let_nodes: &program.let_nodes,
+        fns: &program.fns,
+    };
+
+    let asts = &*program.asts;
+
+    debug!("Interpret: {:#?}", asts);
+
+    if asts.is_empty() {
+        return String::from("");
+    }
+
+    let result = run_do(cxt, &program.var_env, asts);
+
+    print_value(&result)
 }
 
-fn vec_collector<T>(mut b: Vec<T>, a: T) -> Vec<T> {
-    b.push(a);
-    b
-}
 
 #[cfg(test)]
-mod test {
+mod tests {
     extern crate slog_envlogger;
 
-    use itertools::*;
-    use std::rc::Rc;
+    use read::{self, InputStream, Sexp};
 
-    use lang;
+    pub fn read(text: &str) -> Vec<Sexp> {
+        let mut env = Default::default();
+        let mut stream = InputStream::new(text.to_string());
 
-    fn test_(input: &str, expected: &str) {
+        read::read(&mut env, &mut stream).unwrap()
+    }
+
+    #[test]
+    fn accept() {
+        use super::TypeId;
+        use super::TypeAcceptor::*;
+
+        assert!(Void.accepts(&[]));
+        assert!(!Void.accepts(&[TypeId(0)]));
+        assert!(Type(TypeId(5)).accepts(&[TypeId(5)]));
+        assert!(!Type(TypeId(5)).accepts(&[TypeId(0)]));
+        assert!(!Type(TypeId(5)).accepts(&[TypeId(5), TypeId(0)]));
+    }
+
+    // #[test]
+    // fn parse() {
+    //     use super::*;
+
+    // let _ = slog_envlogger::init();
+
+    //     let input = "(def a 1) (def b 2) (def c b) (def d c) a b";
+    //     let sexps = lang::read(input);
+
+    //     panic!("{:#?}", parse_module(Some("test_mod"), sexps));
+    // }
+
+    #[test]
+    fn test_interpret() {
+        use super::*;
+
         let _ = slog_envlogger::init();
-        debug!("Test input: {}", input);
 
-        let sexps = lang::read(input);
-        let (defs, sexps) = lang::separate_defs(sexps).unwrap();
-        let global_scope = Rc::new(lang::Scope::default());
-        let (mut type_env, consts) = lang::process_defs(global_scope.clone(), defs);
-        let asts = sexps.into_iter()
-                        .map(|sexp| lang::sexp_to_ast(global_scope.clone(), sexp))
-                        .fold_results(vec![], lang::vec_collector)
-                        .unwrap();
-
-        let typed_asts = lang::type_infer(&mut type_env, asts);
-
-        debug!("{:#?}", type_env);
-        debug!("Typed Asts: {:#?}", typed_asts);
-
-        let result = lang::interpret(&consts, &*typed_asts);
-
-        assert_eq!(expected, result);
-    }
-
-    macro_rules! test1 {
-        ($name:ident, $input:expr, $expected:expr) => {
-            test1!($name, $input, $expected,);
+        let mut program = ExecUnit {
+            asts: vec![Ast::Let(0.into())],
+            do_nodes: DoNodeTable::new(),
+            call_nodes: CallNodeTable::new(),
+            let_nodes: LetNodeTable::new(),
+            var_env: VarTable::new(),
+            fns: FnTable::new(),
         };
-        ($name:ident, $input:expr, $expected:expr, $($extra:meta),*) => {
-            #[test]
-            $(#[$extra])*
-            fn $name() {
-                test_($input, $expected);
-            }
-        }
+
+        program.let_nodes.insert(0.into(),
+                                 LetNode {
+                                     args: vec![(0.into(), Ast::Num(1))],
+                                     body: vec![Ast::Var(0.into())],
+                                 });
+
+        let result = interpret(&program);
+
+        assert_eq!("1", result);
     }
 
-    test1!(eval_i64, "10", "10");
-    test1!(def_i64, "(def x 10) x", "10");
-    test1!(forward_def_i64, "x (def x 10)", "10");
-    test1!(eval_boolean_t, "true", "true");
-    test1!(eval_boolean_f, "false", "false");
-    test1!(eval_let, "(let (a 4) a)", "4");
-    test1!(alias_i64, "(def x 10) (def y x) y", "10");
-    test1!(forward_alias_i64, "y (def y x) (def x 10)", "10");
-    test1!(let_alias, "(def a 3) (let (a 4) a)", "4");
-    test1!(eval_if_t, "(if true 0 1)", "0");
-    test1!(eval_if_f, "(if false 0 1)", "1");
-    test1!(eval_if_def, "(def a false) (if a 0 1)", "1");
-    test1!(eval_if_let, "(let (a false) (if a 0 1))", "1");
-    test1!(eval_if_in_if, "(if (if true false true) 0 1)", "1");
-    test1!(eval_do, "(do 1 2 ())", "()");
-    // test1!(fn_eval, "((fn (a) a) 1)", "1");
-    // test1!(named_fn, "(def f (fn (a) a)) (f 1)", "1");
-    test1!(nullary_fn, "((fn () 0))", "0");
-    // test1!(named_nullary_fn, "(def f (fn () 1)) (f)", "1");
+    #[ignore]
+    #[test]
+    fn test_interpret_full() {
+        use super::*;
 
+        let _ = slog_envlogger::init();
 
-    test1!(non_bool_if_cond,
-           "(if 0 0 1)",
-           "",
-           should_panic(expected = "Condition of `if` expression must be of type Bool"));
+        let input = "(def inc (fn (a) (+ a 1)))
 
-    test1!(if_branch_mismatch,
-           "(if true 1 false)",
-           "",
-           should_panic(expected = "Branches of `if` expression must have same type"));
+                     (inc 4)";
 
-    test1!(cyclic_dep,
-           "(def x y) (def y z) (def z x)",
-           "",
-           should_panic(expected = "Cyclic dependency: [\"x\", \"y\", \"z\"]"));
+        let sexps = read(input);
+
+        let mut program = analyze(&*sexps).unwrap();
+
+        program.let_nodes.insert(0.into(),
+                                 LetNode {
+                                     args: vec![(0.into(), Ast::Num(1))],
+                                     body: vec![Ast::Var(0.into())],
+                                 });
+
+        let result = interpret(&program);
+
+        assert_eq!("5", result);
+    }
 }
