@@ -23,12 +23,14 @@ pub mod read;
 pub mod types;
 
 use std::collections::HashMap;
+use std::rc::Rc;
+use std::iter;
 
 use types::*;
 
 #[derive(Debug)]
 struct Module {
-    top_level: Vec<Exp>,
+    top_level: Vec<TExp>,
 }
 
 type Env = HashMap<String, Type>;
@@ -114,15 +116,102 @@ fn parse_mod<S: Into<String>>(input: S) -> Module {
         s.into_iter().map(sexp_to_exp).collect()
     }
 
-    let mut exps = vec![];
+    fn exp_to_texp(env: &mut CEnv, e: Exp) -> TExp {
+        match e {
+            Exp::Unit => TExp::Unit,
+            Exp::Bool(val) => TExp::Bool(val),
+            Exp::Int(val) => TExp::Int(val),
+            Exp::Let(bindings, body) => {
+                env.push_scope();
+                let bindings = bindings.into_iter().map(|(sym, ty, exp)| {
+                    let var = env.new_var(sym, ty);
+                    let texp = exp_to_texp(env, exp);
+                    (var, texp)
+                }).collect();
+                let body = body.into_iter().map(|e|exp_to_texp(env, e)).collect();
+                env.pop_scope();
+                TExp::Let(bindings, body)
+            }
+            Exp::Var(sym) => {
+                match env.lookup(sym) {
+                    Some(ref var) => TExp::Var((*var).clone()),
+                    _ => unreachable!(),
+                }
+            }
+            Exp::App(callee, args) => {
+                let texps = iter::once(*callee).chain(args).map(|e| exp_to_texp(env, e)).collect();
+                TExp::App(texps)
+            }
+            Exp::If(cond, b1, b2) => {
+                let cond = exp_to_texp(env, *cond);
+                let b1 = exp_to_texp(env, *b1);
+                let b2 = exp_to_texp(env, *b2);
+                TExp::If(Box::new((cond, b1, b2)))
+            }
+            Exp::Add(args) => {
+                TExp::Add(args.into_iter().map(|e| exp_to_texp(env, e)).collect())
+            }
+        }
+    }
+
+    struct CEnv {
+        counter: usize,
+        envs: Vec<HashMap<String, Rc<Var>>>,
+    }
+
+    impl CEnv {
+        fn push_scope(&mut self) {
+            let new_env = self.envs.last().unwrap().clone();
+            self.envs.push(new_env);
+        }
+        fn pop_scope(&mut self) {
+            self.envs.pop();
+        }
+
+        fn new_var(&mut self, sym: String, ty: Type) -> Rc<Var> {
+            let id = self.counter;
+            self.counter += 1;
+            let var = Rc::new(Var{id, sym: sym.clone(), ty});
+            self.envs.last_mut().unwrap().insert(sym, var.clone());
+            var
+        }
+        fn lookup<S: AsRef<str>>(&self, sym: S) -> Option<&Rc<Var>> {
+            self.envs.last().unwrap().get(sym.as_ref())
+        }
+    }
+
+    let mut texps = vec![];
+    let mut conv_env = CEnv{counter:0, envs: vec![HashMap::new()]};
 
     for sexp in sexps {
         let exp = f(&mut env, sexp_to_exp(sexp));
-        exps.push(exp);
+        let texp = exp_to_texp(&mut conv_env, exp);
+        texps.push(texp);
     }
 
-    Module { top_level: exps }
+    Module { top_level: texps }
 }
+
+#[derive(Debug)]
+struct Var {
+    id: usize,
+    ty: Type,
+    sym: String,
+}
+
+#[derive(Debug)]
+enum TExp {
+    Unit,
+    Bool(bool),
+    Int(i64),
+    Let(Vec<(Rc<Var>, TExp)>, Vec<TExp>),
+    Var(Rc<Var>),
+    // callee is included
+    App(Vec<TExp>),
+    If(Box<(TExp, TExp, TExp)>),
+    Add(Vec<TExp>),
+}
+
 
 
 #[cfg(test)]
