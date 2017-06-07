@@ -25,6 +25,7 @@ pub mod types;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::iter;
+use std::mem;
 
 use types::*;
 
@@ -122,14 +123,23 @@ fn parse_mod<S: Into<String>>(input: S) -> Module {
             Exp::Bool(val) => TExp::Bool(val),
             Exp::Int(val) => TExp::Int(val),
             Exp::Let(bindings, body) => {
-                env.push_scope();
-                let bindings = bindings.into_iter().map(|(sym, ty, exp)| {
-                    let var = env.new_var(sym, ty);
-                    let texp = exp_to_texp(env, exp);
-                    (var, texp)
-                }).collect();
-                let body = body.into_iter().map(|e|exp_to_texp(env, e)).collect();
-                env.pop_scope();
+                let new_env = env.vars.clone();
+                // push scope
+                let old_env = mem::replace(&mut env.vars, new_env);
+
+                let bindings = bindings
+                    .into_iter()
+                    .map(|(sym, ty, exp)| {
+                             let var = env.new_var(sym, ty);
+                             let texp = exp_to_texp(env, exp);
+                             (var, texp)
+                         })
+                    .collect();
+                let body = body.into_iter().map(|e| exp_to_texp(env, e)).collect();
+
+                // pop scope
+                mem::replace(&mut env.vars, old_env);
+
                 TExp::Let(bindings, body)
             }
             Exp::Var(sym) => {
@@ -139,7 +149,10 @@ fn parse_mod<S: Into<String>>(input: S) -> Module {
                 }
             }
             Exp::App(callee, args) => {
-                let texps = iter::once(*callee).chain(args).map(|e| exp_to_texp(env, e)).collect();
+                let texps = iter::once(*callee)
+                    .chain(args)
+                    .map(|e| exp_to_texp(env, e))
+                    .collect();
                 TExp::App(texps)
             }
             Exp::If(cond, b1, b2) => {
@@ -148,40 +161,37 @@ fn parse_mod<S: Into<String>>(input: S) -> Module {
                 let b2 = exp_to_texp(env, *b2);
                 TExp::If(Box::new((cond, b1, b2)))
             }
-            Exp::Add(args) => {
-                TExp::Add(args.into_iter().map(|e| exp_to_texp(env, e)).collect())
-            }
+            Exp::Add(args) => TExp::Add(args.into_iter().map(|e| exp_to_texp(env, e)).collect()),
         }
     }
 
     struct CEnv {
         counter: usize,
-        envs: Vec<HashMap<String, Rc<Var>>>,
+        vars: HashMap<String, Var>,
     }
 
     impl CEnv {
-        fn push_scope(&mut self) {
-            let new_env = self.envs.last().unwrap().clone();
-            self.envs.push(new_env);
-        }
-        fn pop_scope(&mut self) {
-            self.envs.pop();
-        }
-
-        fn new_var(&mut self, sym: String, ty: Type) -> Rc<Var> {
+        fn new_var(&mut self, sym: String, ty: Type) -> Var {
             let id = self.counter;
             self.counter += 1;
-            let var = Rc::new(Var{id, sym: sym.clone(), ty});
-            self.envs.last_mut().unwrap().insert(sym, var.clone());
+            let info = Rc::new(VarInfo {
+                                   sym: sym.clone(),
+                                   ty,
+                               });
+            let var = Var { id, info };
+            self.vars.insert(sym, var.clone());
             var
         }
-        fn lookup<S: AsRef<str>>(&self, sym: S) -> Option<&Rc<Var>> {
-            self.envs.last().unwrap().get(sym.as_ref())
+        fn lookup<S: AsRef<str>>(&self, sym: S) -> Option<&Var> {
+            self.vars.get(sym.as_ref())
         }
     }
 
     let mut texps = vec![];
-    let mut conv_env = CEnv{counter:0, envs: vec![HashMap::new()]};
+    let mut conv_env = CEnv {
+        counter: 0,
+        vars: HashMap::new(),
+    };
 
     for sexp in sexps {
         let exp = f(&mut env, sexp_to_exp(sexp));
@@ -193,10 +203,15 @@ fn parse_mod<S: Into<String>>(input: S) -> Module {
 }
 
 #[derive(Debug)]
+struct VarInfo {
+    sym: String,
+    ty: Type,
+}
+
+#[derive(Debug, Clone)]
 struct Var {
     id: usize,
-    ty: Type,
-    sym: String,
+    info: Rc<VarInfo>,
 }
 
 #[derive(Debug)]
@@ -204,15 +219,82 @@ enum TExp {
     Unit,
     Bool(bool),
     Int(i64),
-    Let(Vec<(Rc<Var>, TExp)>, Vec<TExp>),
-    Var(Rc<Var>),
+    Let(Vec<(Var, TExp)>, Vec<TExp>),
+    Var(Var),
     // callee is included
     App(Vec<TExp>),
     If(Box<(TExp, TExp, TExp)>),
     Add(Vec<TExp>),
+    // Extern/ExternApp
 }
 
+#[derive(Copy, Clone, Debug, PartialEq)]
+enum Value {
+    Unit,
+    Bool(bool),
+    Int(i64),
+}
 
+struct Interpreter {
+    vars: HashMap<usize, Value>,
+}
+
+impl Interpreter {
+    fn new() -> Self {
+        Interpreter { vars: HashMap::new() }
+    }
+
+    fn eval(&mut self, exp: &TExp) -> Value {
+        match *exp {
+            TExp::Unit => Value::Unit,
+            TExp::Bool(val) => Value::Bool(val),
+            TExp::Int(val) => Value::Int(val),
+            TExp::Add(ref args) => {
+                Value::Int(args.into_iter()
+                               .map(|arg| match self.eval(arg) {
+                                        Value::Int(val) => val,
+                                        _ => unreachable!(),
+                                    })
+                               .fold(0, |acc, e| acc + e))
+            }
+            TExp::Var(ref var) => self.vars[&var.id],
+            TExp::If(ref exps) => {
+                match **exps {
+                    (ref cond, ref b1, ref b2) => {
+                        match self.eval(cond) {
+                            Value::Bool(val) => if val { self.eval(b1) } else { self.eval(b2) },
+                            _ => unreachable!(),
+                        }
+                    }
+                }
+            }
+            TExp::App(ref exps) => {
+                let (callee, args) = exps.split_first().unwrap_or_else(|| unreachable!());
+                unimplemented!()
+            }
+            TExp::Let(ref bindings, ref body) => {
+                let new_vars = self.vars.clone();
+                let vars = mem::replace(&mut self.vars, new_vars);
+
+                for &(ref var, ref exp) in bindings {
+                    let value = self.eval(exp);
+                    self.vars.insert(var.id, value);
+                }
+
+                let (last, rest) = body.split_last().unwrap_or_else(|| unreachable!());
+
+                for exp in rest {
+                    self.eval(exp);
+                }
+
+                let value = self.eval(last);
+
+                mem::replace(&mut self.vars, vars);
+                value
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -222,11 +304,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_mod() {
-        let input = "(let (x 4) x)";
-        let module = parse_mod(input);
+    fn test_interpret() {
+        let input = "(let (x (let (x 4) x)) (let (x 5) x))";
+        let expected = Value::Int(5);
 
-        println!("{:#?}", module);
+        let module = parse_mod(input);
+        let exp = &module.top_level[0];
+        let mut interp = Interpreter::new();
+        assert_eq!(interp.eval(exp), expected);
     }
 }
 
