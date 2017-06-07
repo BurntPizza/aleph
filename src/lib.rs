@@ -36,37 +36,52 @@ pub mod types;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::iter;
+use std::fmt::{self, Debug, Formatter};
 
 use types::*;
 
-#[derive(Debug)]
-struct Extern {
-    ty: Type,
-    val: Value,
+#[derive(Copy)]
+struct ExternFnPtr(fn(&[Value]) -> Value);
+
+impl PartialEq for ExternFnPtr {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 as *const () == other.0 as *const ()
+    }
 }
 
+impl Clone for ExternFnPtr {
+    fn clone(&self) -> Self {
+        ExternFnPtr(self.0)
+    }
+}
+
+impl Debug for ExternFnPtr {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_tuple("ExternFnPtr").field(&(self.0 as *const ())).finish()
+    }
+}
+
+#[derive(Debug)]
+enum Extern {
+    Fn {
+        ty: Type,
+        ptr: ExternFnPtr,
+    },
+}
 #[derive(Debug)]
 struct Module {
     top_level: Vec<TExp>,
     externs: HashMap<String, Extern>,
-    linked: HashMap<usize, Rc<FnInfo>>,
 }
 
 #[derive(Default)]
 struct ModuleBuilder {
     externs: HashMap<String, Extern>,
-    linked_fns: HashMap<usize, Rc<FnInfo>>,
 }
 
 impl ModuleBuilder {
     fn register_extern<S: Into<String>>(&mut self, sym: S, e: Extern) {
         self.externs.insert(sym.into(), e);
-    }
-
-    // FIXME
-    fn link_fn(&mut self, f: Fn) {
-        let Fn { id, info } = f;
-        self.linked_fns.insert(id, info);
     }
 
     fn parse_mod<S: Into<String>>(self, input: S) -> Module {
@@ -180,34 +195,34 @@ impl ModuleBuilder {
                 Exp::Int(val) => TExp::Int(val),
                 Exp::Let(bindings, body) => {
                     scope! {
-                    env.vars => env.vars.clone();
+                        env.vars => env.vars.clone();
 
-                    let bindings = bindings
-                        .into_iter()
-                        .map(|(sym, ty, exp)| {
-                            let var = env.new_var(sym, ty);
-                            let texp = exp_to_texp(env, exp);
-                            (var, texp)
-                        })
-                        .collect();
-                    let body = body.into_iter().map(|e| exp_to_texp(env, e)).collect();
+                        let bindings = bindings
+                            .into_iter()
+                            .map(|(sym, ty, exp)| {
+                                let var = env.new_var(sym, ty);
+                                let texp = exp_to_texp(env, exp);
+                                (var, texp)
+                            })
+                            .collect();
+                        let body = body.into_iter().map(|e| exp_to_texp(env, e)).collect();
 
-                    TExp::Let(bindings, body)
-                }
+                        TExp::Let(bindings, body)
+                    }
                 }
                 Exp::Fn(ty, params, body) => {
                     scope! {
-                    env.vars => env.vars.clone();
+                        env.vars => env.vars.clone();
 
-                    let params = params
-                        .into_iter()
-                        .map(|(sym, ty)| env.new_var(sym, ty))
-                        .collect();
+                        let params = params
+                            .into_iter()
+                            .map(|(sym, ty)| env.new_var(sym, ty))
+                            .collect();
 
-                    let body = body.into_iter().map(|e| exp_to_texp(env, e)).collect();
+                        let body = body.into_iter().map(|e| exp_to_texp(env, e)).collect();
 
-                    TExp::Fn(env.new_fn(params, body))
-                }
+                        TExp::Fn(env.new_fn(params, body))
+                    }
                 }
                 Exp::Var(sym) => {
                     match env.lookup(sym) {
@@ -270,12 +285,13 @@ impl ModuleBuilder {
             vars: HashMap::new(),
         };
 
-        for (sym, &Extern { ref ty, .. }) in &self.externs {
-            env.vars.insert(sym.clone(), ty.clone());
-        }
-
-        for (var, ty) in &env.vars {
-            conv_env.new_var(var.clone(), ty.clone());
+        for (sym, e) in &self.externs {
+            match *e {
+                Extern::Fn { ref ty, .. } => {
+                    env.vars.insert(sym.clone(), ty.clone());
+                    conv_env.new_var(sym.clone(), ty.clone());
+                }
+            }
         }
 
         let sexps = read::read(&mut reader_env, &mut input).unwrap();
@@ -291,7 +307,6 @@ impl ModuleBuilder {
         Module {
             externs: self.externs,
             top_level: texps,
-            linked: self.linked_fns,
         }
     }
 }
@@ -332,7 +347,6 @@ enum TExp {
     If(Box<(TExp, TExp, TExp)>),
     Add(Vec<TExp>),
     Fn(Fn),
-    // Extern/ExternApp
 }
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -341,6 +355,7 @@ enum Value {
     Bool(bool),
     Int(i64),
     Fn(usize),
+    ExternFn(ExternFnPtr),
 }
 
 #[derive(Default)]
@@ -353,11 +368,11 @@ struct Interpreter {
 impl Interpreter {
     fn exec_module(&mut self, m: &Module) -> Value {
         for (sym, e) in &m.externs {
-            self.externs.insert(sym.clone(), e.val);
-        }
-
-        for (&id, info) in &m.linked {
-            self.fns.insert(id, info.clone());
+            match *e {
+                Extern::Fn{ptr, ..} => {
+                    self.externs.insert(sym.clone(), Value::ExternFn(ptr));
+                }
+            }
         }
 
         if let Some((last, rest)) = m.top_level.split_last() {
@@ -424,6 +439,10 @@ impl Interpreter {
                             value
                         }
                     }
+                    Value::ExternFn(ptr) => {
+                        let args = args.into_iter().map(|e| self.eval(e)).collect_vec();
+                        ptr.0(&*args)
+                    }
                     _ => unreachable!(),
                 }
             }
@@ -464,16 +483,14 @@ mod tests {
 
     #[test]
     fn test_interpret() {
-        let five = Extern {
+        fn five_fn_ptr(args: &[Value]) -> Value {
+            assert!(args.is_empty());
+            Value::Int(5)
+        }
+
+        let five = Extern::Fn {
             ty: Type::Fun(vec![], Box::new(Type::Int)),
-            val: Value::Fn(10),
-        };
-        let five_fn = Fn {
-            id: 10,
-            info: Rc::new(FnInfo {
-                              params: vec![],
-                              body: vec![TExp::Int(5)],
-                          }),
+            ptr: ExternFnPtr(five_fn_ptr),
         };
 
         let input = "(five)";
@@ -481,7 +498,6 @@ mod tests {
 
         let mut builder = ModuleBuilder::default();
         builder.register_extern("five", five);
-        builder.link_fn(five_fn);
 
         let module = builder.parse_mod(input);
         let mut interp = Interpreter::default();
