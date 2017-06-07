@@ -3,6 +3,8 @@ use std::rc::Rc;
 use std::cell::{RefCell, Ref};
 use std::collections::HashMap;
 
+use itertools::*;
+
 #[derive(PartialEq, Clone, Debug)]
 pub struct TRef(Rc<RefCell<Option<Type>>>);
 
@@ -43,6 +45,7 @@ pub enum Exp {
     App(Box<Exp>, Vec<Exp>),
     If(Box<Exp>, Box<Exp>, Box<Exp>),
     Add(Vec<Exp>),
+    Fn(Type, Vec<(String, Type)>, Vec<Exp>),
 }
 
 fn deref_typ(t: Type) -> Type {
@@ -59,7 +62,7 @@ fn deref_typ(t: Type) -> Type {
                     r.set(tp.clone());
                     tp
                 }
-                _ => panic!("Unable to infer type"),
+                _ => Type::Var(r), //panic!("Unable to infer type"),
             }
         }
         t => t,
@@ -84,6 +87,14 @@ fn deref_term(e: Exp) -> Exp {
                 .collect();
             Let(params, body.into_iter().map(deref_term).collect())
         }
+        Fn(ty, params, body) => {
+            Fn(deref_typ(ty),
+               params
+                   .into_iter()
+                   .map(|(sym, ty)| (sym, deref_typ(ty)))
+                   .collect(),
+               body.into_iter().map(deref_term).collect())
+        }
         App(e, es) => App(map(e), es.into_iter().map(deref_term).collect()),
         e => e,
     }
@@ -93,7 +104,7 @@ fn occur(r1: &TRef, t: &Type) -> bool {
     match *t {
         Type::Fun(ref t2s, ref t2) => t2s.into_iter().any(|t2| occur(r1, t2)) || occur(r1, &*t2),
         Type::Var(ref r2) => {
-            if r1 == r2 {
+            if r1.0.borrow().is_some() && r2.0.borrow().is_some() && r1 == r2 {
                 true
             } else if let None = *r2.get() {
                 false
@@ -113,7 +124,7 @@ fn unify(t1: &Type, t2: &Type) -> Result<(), (Type, Type)> {
         (&Type::Bool, &Type::Bool) |
         (&Type::Int, &Type::Int) => Ok(()),
         (&Type::Fun(ref t1s, ref t1p), &Type::Fun(ref t2s, ref t2p)) => {
-            for (t1, t2) in t1s.into_iter().zip(t2s) {
+            for (t1, t2) in zip(t1s, t2s) {
                 unify(t1, t2)?;
             }
             unify(t1p, t2p)
@@ -145,7 +156,12 @@ fn unify(t1: &Type, t2: &Type) -> Result<(), (Type, Type)> {
     }
 }
 
-pub fn g(env: &mut HashMap<String, Type>, e: &Exp) -> Type {
+#[derive(Default)]
+pub struct InferenceEnv {
+    pub vars: HashMap<String, Type>,
+}
+
+pub fn g(env: &mut InferenceEnv, e: &Exp) -> Type {
     use self::Exp::*;
 
     match *e {
@@ -159,22 +175,24 @@ pub fn g(env: &mut HashMap<String, Type>, e: &Exp) -> Type {
             Type::Int
         }
         Let(ref params, ref e2) => {
-            let mut env = env.clone();
+            scope! {
+                env.vars => env.vars.clone();
 
-            for &(ref x, ref t, ref e1) in params {
-                unify(t, &g(&mut env, e1)).unwrap();
-                env.insert(x.clone(), t.clone());
-            }
-            
-            let (last, rest) = e2.split_last().unwrap();
-            for e in rest {
-                g(&mut env, e);
-            }
+                for &(ref x, ref t, ref e1) in params {
+                    unify(t, &g(env, e1)).unwrap();
+                    env.vars.insert(x.clone(), t.clone());
+                }
 
-            g(&mut env, last)
+                let (last, rest) = e2.split_last().unwrap();
+                for e in rest {
+                    g(env, e);
+                }
+
+                g(env, last)
+            }
         }
         Var(ref x) => {
-            if let Some(x) = env.get(x).cloned() {
+            if let Some(x) = env.vars.get(x).cloned() {
                 x
             } else {
                 panic!("Unknown sym: {:?}", x);
@@ -194,10 +212,46 @@ pub fn g(env: &mut HashMap<String, Type>, e: &Exp) -> Type {
             unify(&t2, &t3).unwrap();
             t2
         }
+        Fn(ref ty, ref params, ref body) => {
+            scope! {
+                env.vars => env.vars.clone();
+                env.vars.extend(params.clone());
+                
+                let param_types = params.into_iter().map(|&(_, ref ty)| ty.clone()).collect();
+                let ret_type = {
+                    let (last, rest) = body.split_last().unwrap();
+                    for e in rest {
+                        g(env, e);
+                    }
+                    g(env, last)
+                };
+                
+                let fn_ty = Type::Fun(param_types, Box::new(ret_type));
+                unify(ty, &fn_ty).unwrap();
+                fn_ty
+            }
+
+            // let new_vars = env.vars.clone();
+            // let old_vars = mem::replace(&mut env.vars, new_vars);
+            // env.vars.extend(params.clone());
+
+            // let param_types = params.into_iter().map(|&(_, ref ty)| ty.clone()).collect();
+            // let ret_type = {
+            //     let (last, rest) = body.split_last().unwrap();
+            //     for e in rest {
+            //         g(&mut env, e);
+            //     }
+            //     g(&mut env, last)
+            // };
+            // mem::replace(&mut env.vars, old_vars);
+            // let fn_ty = Type::Fun(param_types, Box::new(ret_type));
+            // unify(ty, &fn_ty).unwrap();
+            // fn_ty
+        }
     }
 }
 
-pub fn f(env: &mut HashMap<String, Type>, e: Exp) -> Exp {
+pub fn f(env: &mut InferenceEnv, e: Exp) -> Exp {
     g(env, &e);
     deref_term(e)
 }
