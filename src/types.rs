@@ -124,6 +124,7 @@ fn unify(t1: &Type, t2: &Type) -> Result<(), (Type, Type)> {
         (&Type::Bool, &Type::Bool) |
         (&Type::Int, &Type::Int) => Ok(()),
         (&Type::Fun(ref t1s, ref t1p), &Type::Fun(ref t2s, ref t2p)) => {
+            assert_eq!(t1s.len(), t2s.len());
             for (t1, t2) in zip(t1s, t2s) {
                 unify(t1, t2)?;
             }
