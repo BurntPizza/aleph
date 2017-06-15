@@ -36,7 +36,7 @@ impl Default for Env {
         for k in 0..128u8 {
             let k = k as char;
             let v = match k {
-                '_' | '-' | '+' => TokenChar,
+                '_' | '-' | '+' | '*' => TokenChar,
                 c if c.is_alphanumeric() => TokenChar,
                 c if c.is_whitespace() => Whitespace,
                 _ => continue,
