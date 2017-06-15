@@ -76,7 +76,8 @@ pub enum TExp {
     Var(Var),
     // callee is included
     App(Vec<TExp>),
-    If(Box<(TExp, TExp, TExp)>),
+    IfElse(Box<(TExp, TExp, TExp)>),
+    If(Box<(TExp, TExp)>),
     Add(Vec<TExp>),
     Fn(Fn),
 }
@@ -130,12 +131,14 @@ impl Interpreter {
             TExp::Bool(val) => Value::Bool(val),
             TExp::Int(val) => Value::Int(val),
             TExp::Add(ref args) => {
-                Value::Int(args.into_iter()
-                               .map(|arg| match self.eval(arg) {
-                                        Value::Int(val) => val,
-                                        _ => unreachable!(),
-                                    })
-                               .fold(0, |acc, e| acc + e))
+                Value::Int(
+                    args.into_iter()
+                        .map(|arg| match self.eval(arg) {
+                            Value::Int(val) => val,
+                            _ => unreachable!(),
+                        })
+                        .fold(0, |acc, e| acc + e),
+                )
             }
             TExp::Var(ref var) => {
                 if let Some(&val) = self.vars.get(&var.id) {
@@ -144,12 +147,24 @@ impl Interpreter {
                     self.externs[&var.info.sym]
                 }
             }
-            TExp::If(ref exps) => {
+            TExp::IfElse(ref exps) => {
                 let (ref cond, ref b1, ref b2) = **exps;
                 match self.eval(cond) {
                     Value::Bool(val) => if val { self.eval(b1) } else { self.eval(b2) },
                     _ => unreachable!(),
                 }
+            }
+            TExp::If(ref exps) => {
+                let (ref cond, ref then) = **exps;
+                match self.eval(cond) {
+                    Value::Bool(val) => {
+                        if val {
+                            self.eval(then);
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+                Value::Unit
             }
             TExp::App(ref exps) => {
                 let (callee, args) = exps.split_first().unwrap_or_else(|| unreachable!());
@@ -247,16 +262,6 @@ mod tests {
 
     #[test]
     fn test_higher_order() {
-        fn five_fn_ptr(args: &[Value]) -> Value {
-            assert!(args.is_empty());
-            Value::Int(5)
-        }
-
-        let five = Extern::Fn {
-            ty: Type::Fun(vec![], Box::new(Type::Int)),
-            ptr: ExternFnPtr(five_fn_ptr),
-        };
-
         let input = "(let (f (fn (x) (x 4)) \
                            a (fn (b) b)) \
                       (f a))";
@@ -272,16 +277,6 @@ mod tests {
 
     #[test]
     fn test_closure() {
-        fn five_fn_ptr(args: &[Value]) -> Value {
-            assert!(args.is_empty());
-            Value::Int(5)
-        }
-
-        let five = Extern::Fn {
-            ty: Type::Fun(vec![], Box::new(Type::Int)),
-            ptr: ExternFnPtr(five_fn_ptr),
-        };
-
         let input = "(let (x 1
                            a (fn (b) (+ x b)))
                       (a 1))";
@@ -323,11 +318,27 @@ mod tests {
     }
 
     #[test]
-    fn test_slice_swap() {
-        let mut v = vec![0, 1, 2];
-        v.swap(0, 1);
-        assert_equal(&v, &[1, 0, 2]);
-        v.swap(1, 1);
-        assert_equal(&v, &[1, 0, 2]);
+    fn test_if() {
+        fn print_fn_ptr(args: &[Value]) -> Value {
+            assert!(args.is_empty());
+            println!("Hello from 'print'");
+            Value::Unit
+        }
+
+        let print = Extern::Fn {
+            ty: Type::Fun(vec![], Box::new(Type::Unit)),
+            ptr: ExternFnPtr(print_fn_ptr),
+        };
+
+        let mut builder = ModuleBuilder::default();
+        builder.register_extern("print", print);
+
+        let input = "(let (b true) (if b (print)))";
+        let expected = Value::Unit;
+
+        let module = builder.parse_mod(input);
+        let mut interp = Interpreter::default();
+
+        assert_eq!(interp.exec_module(&module), expected);
     }
 }

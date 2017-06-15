@@ -189,8 +189,8 @@ impl<'builder> ModuleBuilder<'builder> {
             .into_iter()
             .map(|(name, sexp)| {
                 let exp = sexp_to_exp(sexp);
-                let exp = f(&mut env, exp);
                 let ty = g(&mut env, &exp);
+                let exp = types::deref_term(exp);
                 let texp = exp_to_texp(&mut conv_env, exp);
                 let rc = Rc::new((texp, ty));
                 if pub_defs.contains(&name) {
@@ -332,11 +332,20 @@ fn sexp_fn(mut args: Vec<Sexp>) -> Exp {
 }
 
 fn sexp_if(mut args: Vec<Sexp>) -> Exp {
-    assert_eq!(args.len(), 3);
-    let cond = sexp_to_exp(args.remove(0));
-    let b1 = sexp_to_exp(args.remove(0));
-    let b2 = sexp_to_exp(args.remove(0));
-    Exp::If(Box::new(cond), Box::new(b1), Box::new(b2))
+    match args.len() {
+        2 => {
+            let cond = sexp_to_exp(args.remove(0));
+            let b1 = sexp_to_exp(args.remove(0));
+            Exp::If(Box::new(cond), Box::new(b1))
+        }
+        3 => {
+            let cond = sexp_to_exp(args.remove(0));
+            let b1 = sexp_to_exp(args.remove(0));
+            let b2 = sexp_to_exp(args.remove(0));
+            Exp::IfElse(Box::new(cond), Box::new(b1), Box::new(b2))
+        }
+        _ => panic!(),
+    }
 }
 
 fn sexp_to_exp(s: Sexp) -> Exp {
@@ -428,11 +437,16 @@ fn exp_to_texp(env: &mut CEnv, e: Exp) -> TExp {
                 .collect();
             TExp::App(texps)
         }
-        Exp::If(cond, b1, b2) => {
+        Exp::IfElse(cond, b1, b2) => {
             let cond = exp_to_texp(env, *cond);
             let b1 = exp_to_texp(env, *b1);
             let b2 = exp_to_texp(env, *b2);
-            TExp::If(Box::new((cond, b1, b2)))
+            TExp::IfElse(Box::new((cond, b1, b2)))
+        }
+        Exp::If(cond, then) => {
+            let cond = exp_to_texp(env, *cond);
+            let then = exp_to_texp(env, *then);
+            TExp::If(Box::new((cond, then)))
         }
         Exp::Add(args) => TExp::Add(args.into_iter().map(|e| exp_to_texp(env, e)).collect()),
     }

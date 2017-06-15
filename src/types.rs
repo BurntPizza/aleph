@@ -43,7 +43,8 @@ pub enum Exp {
     Let(Vec<(String, Type, Exp)>, Vec<Exp>),
     Var(String),
     App(Box<Exp>, Vec<Exp>),
-    If(Box<Exp>, Box<Exp>, Box<Exp>),
+    IfElse(Box<Exp>, Box<Exp>, Box<Exp>),
+    If(Box<Exp>, Box<Exp>),
     Add(Vec<Exp>),
     Fn(Type, Vec<(String, Type)>, Vec<Exp>),
 }
@@ -69,7 +70,7 @@ fn deref_typ(t: Type) -> Type {
     }
 }
 
-fn deref_term(e: Exp) -> Exp {
+pub fn deref_term(e: Exp) -> Exp {
     use self::Exp::*;
 
     fn map(e: Box<Exp>) -> Box<Exp> {
@@ -79,7 +80,7 @@ fn deref_term(e: Exp) -> Exp {
 
     match e {
         Add(es) => Add(es.into_iter().map(deref_term).collect()),
-        If(e1, e2, e3) => If(map(e1), map(e2), map(e3)),
+        IfElse(e1, e2, e3) => IfElse(map(e1), map(e2), map(e3)),
         Let(params, body) => {
             let params = params
                 .into_iter()
@@ -206,12 +207,17 @@ pub fn g(env: &mut InferenceEnv, e: &Exp) -> Type {
             unify(&g(env, e), &tf).unwrap();
             t
         }
-        If(ref e1, ref e2, ref e3) => {
+        IfElse(ref e1, ref e2, ref e3) => {
             unify(&g(env, e1), &Type::Bool).unwrap();
             let t2 = g(env, e2);
             let t3 = g(env, e3);
             unify(&t2, &t3).unwrap();
             t2
+        }
+        If(ref cond, ref then) => {
+            unify(&g(env, cond), &Type::Bool).unwrap();
+            unify(&g(env, then), &Type::Unit).unwrap();
+            Type::Unit
         }
         Fn(ref ty, ref params, ref body) => {
             scope! {
