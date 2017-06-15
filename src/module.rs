@@ -274,7 +274,7 @@ fn check_for_cyclic_deps(mut defs: Vec<(String, Sexp)>) -> Vec<(String, Sexp)> {
     defs
 }
 
-fn sexp_let(mut args: Vec<Sexp>) -> Exp {
+fn sexp_let(mut args: Vec<Sexp>) -> Ast {
     assert!(args.len() > 1);
     let body = sexps_to_exps(args.split_off(1));
     let params = match args.remove(0) {
@@ -299,10 +299,10 @@ fn sexp_let(mut args: Vec<Sexp>) -> Exp {
         _ => panic!("first arg to let must be a list"),
     };
 
-    Exp::Let(params, body)
+    Ast::Let(params, body)
 }
 
-fn sexp_fn(mut args: Vec<Sexp>) -> Exp {
+fn sexp_fn(mut args: Vec<Sexp>) -> Ast {
     assert!(args.len() > 1);
     let body = sexps_to_exps(args.split_off(1));
     let params = match args.remove(0) {
@@ -328,72 +328,72 @@ fn sexp_fn(mut args: Vec<Sexp>) -> Exp {
         repeat_call(gentyp).take(params.len()).collect(),
         Box::new(gentyp()),
     );
-    Exp::Fn(ty, params, body)
+    Ast::Fn(ty, params, body)
 }
 
-fn sexp_if(mut args: Vec<Sexp>) -> Exp {
+fn sexp_if(mut args: Vec<Sexp>) -> Ast {
     match args.len() {
         2 => {
             let cond = sexp_to_exp(args.remove(0));
             let b1 = sexp_to_exp(args.remove(0));
-            Exp::If(Box::new(cond), Box::new(b1))
+            Ast::If(Box::new(cond), Box::new(b1))
         }
         3 => {
             let cond = sexp_to_exp(args.remove(0));
             let b1 = sexp_to_exp(args.remove(0));
             let b2 = sexp_to_exp(args.remove(0));
-            Exp::IfElse(Box::new(cond), Box::new(b1), Box::new(b2))
+            Ast::IfElse(Box::new(cond), Box::new(b1), Box::new(b2))
         }
         _ => panic!(),
     }
 }
 
-fn sexp_to_exp(s: Sexp) -> Exp {
+fn sexp_to_exp(s: Sexp) -> Ast {
     match s {
         Sexp::Atom(_, _, sym) => {
             match sym.parse() {
-                Ok(val) => Exp::Int(val),
+                Ok(val) => Ast::Int(val),
                 _ => {
                     match &*sym {
-                        "true" => Exp::Bool(true),
-                        "false" => Exp::Bool(false),
-                        _ => Exp::Var(sym),
+                        "true" => Ast::Bool(true),
+                        "false" => Ast::Bool(false),
+                        _ => Ast::Var(sym),
                     }
                 }
             }
         }
         Sexp::List(_, _, mut children) => {
             if children.is_empty() {
-                Exp::Unit
+                Ast::Unit
             } else {
                 let callee = sexp_to_exp(children.remove(0));
                 match callee {
-                    Exp::Var(sym) => {
+                    Ast::Var(sym) => {
                         match &*sym {
-                            "+" => Exp::Add(sexps_to_exps(children)),
+                            "+" => Ast::Add(sexps_to_exps(children)),
                             "let" => sexp_let(children),
                             "if" => sexp_if(children),
                             "fn" => sexp_fn(children),
-                            _ => Exp::App(Box::new(Exp::Var(sym)), sexps_to_exps(children)),
+                            _ => Ast::App(Box::new(Ast::Var(sym)), sexps_to_exps(children)),
                         }
                     }
-                    _ => Exp::App(Box::new(callee), sexps_to_exps(children)),
+                    _ => Ast::App(Box::new(callee), sexps_to_exps(children)),
                 }
             }
         }
     }
 }
 
-fn sexps_to_exps(s: Vec<Sexp>) -> Vec<Exp> {
+fn sexps_to_exps(s: Vec<Sexp>) -> Vec<Ast> {
     s.into_iter().map(sexp_to_exp).collect()
 }
 
-fn exp_to_texp(env: &mut CEnv, e: Exp) -> TExp {
+fn exp_to_texp(env: &mut CEnv, e: Ast) -> TExp {
     match e {
-        Exp::Unit => TExp::Unit,
-        Exp::Bool(val) => TExp::Bool(val),
-        Exp::Int(val) => TExp::Int(val),
-        Exp::Let(bindings, body) => {
+        Ast::Unit => TExp::Unit,
+        Ast::Bool(val) => TExp::Bool(val),
+        Ast::Int(val) => TExp::Int(val),
+        Ast::Let(bindings, body) => {
             scope! {
                 env.vars => env.vars.clone();
 
@@ -410,7 +410,7 @@ fn exp_to_texp(env: &mut CEnv, e: Exp) -> TExp {
                 TExp::Let(bindings, body)
             }
         }
-        Exp::Fn(ty, params, body) => {
+        Ast::Fn(ty, params, body) => {
             scope! {
                 env.vars => env.vars.clone();
 
@@ -424,31 +424,31 @@ fn exp_to_texp(env: &mut CEnv, e: Exp) -> TExp {
                 TExp::Fn(env.new_fn(params, body))
             }
         }
-        Exp::Var(sym) => {
+        Ast::Var(sym) => {
             match env.lookup(sym) {
                 Some(ref var) => TExp::Var((*var).clone()),
                 _ => unreachable!(),
             }
         }
-        Exp::App(callee, args) => {
+        Ast::App(callee, args) => {
             let texps = iter::once(*callee)
                 .chain(args)
                 .map(|e| exp_to_texp(env, e))
                 .collect();
             TExp::App(texps)
         }
-        Exp::IfElse(cond, b1, b2) => {
+        Ast::IfElse(cond, b1, b2) => {
             let cond = exp_to_texp(env, *cond);
             let b1 = exp_to_texp(env, *b1);
             let b2 = exp_to_texp(env, *b2);
             TExp::IfElse(Box::new((cond, b1, b2)))
         }
-        Exp::If(cond, then) => {
+        Ast::If(cond, then) => {
             let cond = exp_to_texp(env, *cond);
             let then = exp_to_texp(env, *then);
             TExp::If(Box::new((cond, then)))
         }
-        Exp::Add(args) => TExp::Add(args.into_iter().map(|e| exp_to_texp(env, e)).collect()),
+        Ast::Add(args) => TExp::Add(args.into_iter().map(|e| exp_to_texp(env, e)).collect()),
     }
 }
 

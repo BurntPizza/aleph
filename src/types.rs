@@ -36,17 +36,17 @@ pub fn gentyp() -> Type {
 }
 
 #[derive(Debug, Clone)]
-pub enum Exp {
+pub enum Ast {
     Unit,
     Bool(bool),
     Int(i64),
-    Let(Vec<(String, Type, Exp)>, Vec<Exp>),
+    Let(Vec<(String, Type, Ast)>, Vec<Ast>),
     Var(String),
-    App(Box<Exp>, Vec<Exp>),
-    IfElse(Box<Exp>, Box<Exp>, Box<Exp>),
-    If(Box<Exp>, Box<Exp>),
-    Add(Vec<Exp>),
-    Fn(Type, Vec<(String, Type)>, Vec<Exp>),
+    App(Box<Ast>, Vec<Ast>),
+    IfElse(Box<Ast>, Box<Ast>, Box<Ast>),
+    If(Box<Ast>, Box<Ast>),
+    Add(Vec<Ast>),
+    Fn(Type, Vec<(String, Type)>, Vec<Ast>),
 }
 
 fn deref_typ(t: Type) -> Type {
@@ -70,10 +70,10 @@ fn deref_typ(t: Type) -> Type {
     }
 }
 
-pub fn deref_term(e: Exp) -> Exp {
-    use self::Exp::*;
+pub fn deref_term(e: Ast) -> Ast {
+    use self::Ast::*;
 
-    fn map(e: Box<Exp>) -> Box<Exp> {
+    fn map(e: Box<Ast>) -> Box<Ast> {
         // could use a map-in-place version
         Box::new(deref_term(*e))
     }
@@ -163,8 +163,8 @@ pub struct InferenceEnv {
     pub vars: HashMap<String, Type>,
 }
 
-pub fn g(env: &mut InferenceEnv, e: &Exp) -> Type {
-    use self::Exp::*;
+pub fn g(env: &mut InferenceEnv, e: &Ast) -> Type {
+    use self::Ast::*;
 
     match *e {
         Unit => Type::Unit,
@@ -237,28 +237,11 @@ pub fn g(env: &mut InferenceEnv, e: &Exp) -> Type {
                 unify(ty, &fn_ty).unwrap();
                 fn_ty
             }
-
-            // let new_vars = env.vars.clone();
-            // let old_vars = mem::replace(&mut env.vars, new_vars);
-            // env.vars.extend(params.clone());
-
-            // let param_types = params.into_iter().map(|&(_, ref ty)| ty.clone()).collect();
-            // let ret_type = {
-            //     let (last, rest) = body.split_last().unwrap();
-            //     for e in rest {
-            //         g(&mut env, e);
-            //     }
-            //     g(&mut env, last)
-            // };
-            // mem::replace(&mut env.vars, old_vars);
-            // let fn_ty = Type::Fun(param_types, Box::new(ret_type));
-            // unify(ty, &fn_ty).unwrap();
-            // fn_ty
         }
     }
 }
 
-pub fn f(env: &mut InferenceEnv, e: Exp) -> Exp {
+pub fn f(env: &mut InferenceEnv, e: Ast) -> Ast {
     g(env, &e);
     deref_term(e)
 }
