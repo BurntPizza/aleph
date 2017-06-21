@@ -1,11 +1,13 @@
 
 use super::*;
+use read::Sexp;
 
-#[derive(Copy, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Value {
     Unit,
     Bool(bool),
     Int(i64),
+    Sexp(Sexp),
     Fn(usize),
     ExternFn(ExternFnPtr),
 }
@@ -44,11 +46,14 @@ impl Interpreter {
         }
     }
 
-    fn eval(&mut self, exp: &TExp) -> Value {
+    pub fn eval(&mut self, exp: &TExp) -> Value {
         match *exp {
             TExp::Unit => Value::Unit,
             TExp::Bool(val) => Value::Bool(val),
             TExp::Int(val) => Value::Int(val),
+            TExp::Quote(ref sexp) => {
+                Value::Sexp(sexp.clone())
+            }
             TExp::Add(ref args) => {
                 Value::Int(
                     args.into_iter()
@@ -60,10 +65,10 @@ impl Interpreter {
                 )
             }
             TExp::Var(ref var) => {
-                if let Some(&val) = self.vars.get(&var.id) {
-                    val
+                if let Some(val) = self.vars.get(&var.id) {
+                    val.clone()
                 } else {
-                    self.externs[&var.info.sym]
+                    self.externs[&var.info.sym].clone()
                 }
             }
             TExp::IfElse(ref exps) => {

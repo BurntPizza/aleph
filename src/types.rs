@@ -1,4 +1,6 @@
 
+use read::Sexp;
+
 use std::rc::Rc;
 use std::cell::{RefCell, Ref};
 use std::collections::HashMap;
@@ -27,6 +29,7 @@ pub enum Type {
     Unit,
     Bool,
     Int,
+    Sexp,
     Fun(Vec<Type>, Box<Type>),
     Var(TRef),
 }
@@ -40,6 +43,7 @@ pub enum Ast {
     Unit,
     Bool(bool),
     Int(i64),
+    Quote(Sexp),
     Let(Vec<(String, Type, Ast)>, Vec<Ast>),
     Var(String),
     App(Box<Ast>, Vec<Ast>),
@@ -170,6 +174,7 @@ pub fn g(env: &mut InferenceEnv, e: &Ast) -> Type {
         Unit => Type::Unit,
         Bool(_) => Type::Bool,
         Int(_) => Type::Int,
+        Quote(ref ast) => Type::Sexp,
         Add(ref es) => {
             for e in es {
                 unify(&Type::Int, &g(env, e)).unwrap();

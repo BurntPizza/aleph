@@ -7,6 +7,7 @@ use read::Sexp;
 use std::rc::Rc;
 use std::borrow::Borrow;
 use std::fmt::{self, Debug, Formatter};
+use macros::*;
 
 #[derive(Copy)]
 pub struct ExternFnPtr(pub fn(&[Value]) -> Value);
@@ -37,6 +38,45 @@ pub enum Extern {
 }
 
 #[derive(Debug)]
+struct ParamList {
+    vars: Vec<String>,
+    tail: Option<String>,
+}
+
+fn parse_param_list(sexps: &[Sexp]) -> ParamList {
+    let mut vars = vec![];
+    let mut iter = sexps.into_iter();
+
+    while let Some(sexp) = iter.next() {
+        match *sexp {
+            Sexp::Atom(ref sym) => {
+                if sym == "&" {
+                    let tail = match iter.next() {
+                        Some(&Sexp::Atom(ref tail_sym)) => Some(tail_sym.to_owned()),
+                        Some(&Sexp::List(_)) => unimplemented!(),
+                        _ => panic!(),
+                    };
+
+                    assert!(iter.next().is_none());
+                    return ParamList { vars, tail };
+                }
+
+                if sym.starts_with("&") {
+                    assert!(iter.next().is_none());
+                    let tail = Some(sym[1..].to_owned());
+                    return ParamList { vars, tail };
+                }
+
+                vars.push(sym.to_owned());
+            }
+            Sexp::List(_) => unimplemented!(),
+        }
+    }
+
+    ParamList { vars, tail: None }
+}
+
+#[derive(Debug)]
 pub struct Module {
     pub top_level: Vec<TExp>,
     pub externs: HashMap<String, Extern>,
@@ -59,6 +99,10 @@ impl<'builder> ModuleBuilder<'builder> {
     where
         S: Into<String>,
     {
+        self.link_module_impl(name.into(), module)
+    }
+
+    fn link_module_impl<'a: 'builder>(&mut self, name: String, module: &'a Module) {
         let name = name.into();
         if self.linked_modules.contains_key(&name) {
             panic!();
@@ -68,171 +112,226 @@ impl<'builder> ModuleBuilder<'builder> {
     }
 
     pub fn parse_mod<S: Into<String>>(self, input: S) -> Module {
+        fn parse_mod_impl(this: ModuleBuilder, input: String) -> Module {
+            let mut env = InferenceEnv::default();
+            let mut input = read::InputStream::new(input.into());
+            let mut reader_env = read::Env::default();
+            let mut conv_env = CEnv {
+                counter: 0,
+                vars: HashMap::new(),
+            };
 
-        let mut env = InferenceEnv::default();
-        let mut input = read::InputStream::new(input.into());
-        let mut reader_env = read::Env::default();
-        let mut conv_env = CEnv {
-            counter: 0,
-            vars: HashMap::new(),
-        };
-
-        for (sym, e) in &self.externs {
-            match *e {
-                Extern::Fn { ref ty, .. } => {
-                    env.vars.insert(sym.clone(), ty.clone());
-                    conv_env.new_var(sym.clone(), ty.clone());
-                }
-            }
-        }
-
-        let sexps = read::read(&mut reader_env, &mut input).unwrap();
-        let mut use_statements = vec![];
-        let mut top_level = vec![];
-        let mut defs = vec![];
-        let mut def_syms = HashSet::new();
-        let mut pub_defs = HashSet::new();
-
-        for sexp in sexps {
-            match sexp {
-                Sexp::List(a, b, children) => {
-                    match children.first() {
-                        Some(&Sexp::Atom(_, _, ref sym)) => {
-                            match &**sym {
-                                "def" | "pub" => {
-                                    assert_eq!(children.len(), 3);
-                                    let name = &children[1];
-                                    let body = children[2].clone();
-
-                                    let name = match *name {
-                                        Sexp::Atom(_, _, ref sym) => sym,
-                                        _ => panic!(),
-                                    };
-
-                                    if let Some(_) = def_syms.get(name) {
-                                        panic!("Collision: {}", name);
-                                    }
-
-                                    def_syms.insert(name.clone());
-
-                                    if sym == "pub" {
-                                        pub_defs.insert(name.clone());
-                                    }
-
-                                    defs.push((name.to_owned(), body));
-                                }
-                                "use" => {
-                                    let children = children[1..].to_owned();
-                                    use_statements.push(children);
-                                }
-                                _ => {
-                                    top_level.push(Sexp::List(a, b, children.clone()));
-                                }
-                            }
-                        }
-                        _ => top_level.push(Sexp::List(a, b, children.clone())),
+            for (sym, e) in &this.externs {
+                match *e {
+                    Extern::Fn { ref ty, .. } => {
+                        env.vars.insert(sym.clone(), ty.clone());
+                        conv_env.new_var(sym.clone(), ty.clone());
                     }
                 }
-                _ => top_level.push(sexp),
             }
-        }
 
-        enum Import {
-            All(String),
-        }
+            let sexps = read::read(&mut reader_env, &mut input).unwrap();
 
-        let mut imports = vec![];
+            let mut menv = MacroExpansionEnv::default();
+            let sexps = menv.macro_expand(sexps);
 
-        for mut path in use_statements {
-            assert!(path.len() == 2); // TODO
+            let mut top_level = vec![];
+            let mut exported_syms = HashSet::new();
+            let mut defs = vec![];
+            let mut macro_defs = vec![];
+            let mut use_statements = vec![];
 
-            // let mut module;
+            for sexp in sexps {
+                match sexp {
+                    Sexp::List(children) => {
+                        match children.first() {
+                            Some(&Sexp::Atom(ref sym)) => {
+                                match &**sym {
+                                    "def" | "pub" => {
+                                        assert_eq!(children.len(), 3);
+                                        let name = &children[1];
+                                        let body = children[2].clone();
 
-            let segment = match path.remove(0) {
-                Sexp::Atom(_, _, s) => s,
-                _ => panic!(),
-            };
+                                        let name = match *name {
+                                            Sexp::Atom(ref sym) => sym,
+                                            _ => panic!(),
+                                        };
 
-            let module = match self.linked_modules.get(&segment) {
-                Some(m) => m,
-                _ => panic!(),
-            };
+                                        if sym == "pub" {
+                                            if exported_syms.contains(&*name) {
+                                                panic!();
+                                            }
+                                            exported_syms.insert(name.clone());
+                                        }
 
-            match path.remove(0) {
-                Sexp::Atom(_, _, s) => {
-                    if s == "*" {
-                        for (s, rc) in &module.exports {
-                            imports.push((s.clone(), rc.clone()));
+                                        defs.push((name.to_owned(), body));
+                                    }
+                                    "use" => {
+                                        let children = children[1..].to_owned();
+                                        use_statements.push(children);
+                                    }
+                                    "defmacro" => {
+                                        assert!(children.len() >= 3);
+                                        let name = match children[1] {
+                                            Sexp::Atom(ref sym) => sym.to_owned(),
+                                            _ => panic!(),
+                                        };
+                                        let params = match children[2] {
+                                            Sexp::List(ref sexps) => parse_param_list(sexps),
+                                            _ => panic!(),
+                                        };
+                                        let body = children[3..].to_owned();
+
+                                        macro_defs.push((name, (params, body)));
+                                    }
+                                    _ => {
+                                        top_level.push(Sexp::List(children.clone()));
+                                    }
+                                }
+                            }
+                            _ => top_level.push(Sexp::List(children.clone())),
                         }
-                    } else {
-                        let import = match module.exports.get(&s) {
-                            Some(rc) => {
+                    }
+                    _ => top_level.push(sexp),
+                }
+            }
+
+            enum Import {
+                All(String),
+            }
+
+            let mut imports = vec![];
+
+            for mut path in use_statements {
+                assert!(path.len() == 2); // TODO
+
+                // let mut module;
+
+                let segment = match path.remove(0) {
+                    Sexp::Atom(s) => s,
+                    _ => panic!(),
+                };
+
+                let module = match this.linked_modules.get(&segment) {
+                    Some(m) => m,
+                    _ => panic!(),
+                };
+
+                match path.remove(0) {
+                    Sexp::Atom(s) => {
+                        if s == "*" {
+                            for (s, rc) in &module.exports {
                                 imports.push((s.clone(), rc.clone()));
                             }
-                            _ => panic!(),
-                        };
+                        } else {
+                            let import = match module.exports.get(&s) {
+                                Some(rc) => {
+                                    imports.push((s.clone(), rc.clone()));
+                                }
+                                _ => panic!(),
+                            };
+                        }
                     }
+                    _ => panic!(),
                 }
-                _ => panic!(),
+            }
+
+            check_for_name_collisions(&defs, &macro_defs, &imports);
+
+            // do macro expansion
+
+
+            // by this point we know that there are no collisons,
+            // and which symbols will be exported
+
+            // process defs:
+
+            let rev_topo = check_for_cyclic_deps(defs);
+            let mut exports = HashMap::new();
+
+            let defs: HashMap<String, Rc<(TExp, Type)>> = rev_topo
+                .into_iter()
+                .map(|(name, sexp)| {
+                    let exp = sexp_to_exp(sexp);
+                    let ty = g(&mut env, &exp);
+                    let exp = types::deref_term(exp);
+                    let texp = exp_to_texp(&mut conv_env, exp);
+                    let rc = Rc::new((texp, ty));
+                    if exported_syms.contains(&name) {
+                        exports.insert(name.clone(), rc.clone());
+                    }
+                    (name, rc)
+                })
+                .chain(imports)
+                .collect();
+
+            for (name, rc) in &defs {
+                let &(_, ref ty) = &**rc;
+                env.vars.insert(name.clone(), ty.clone());
+                conv_env.new_var(name.clone(), ty.clone());
+            }
+
+            let exps = sexps_to_exps(top_level);
+            let exps = exps.into_iter().map(|e| f(&mut env, e)).collect_vec();
+
+            let texps = exps.into_iter()
+                .map(|e| exp_to_texp(&mut conv_env, e))
+                .collect();
+
+
+            Module {
+                externs: this.externs,
+                top_level: texps,
+                defs,
+                exports,
             }
         }
 
-        // by this point we know that there are no collisons,
-        // and which symbols will be exported
+        parse_mod_impl(self, input.into())
+    }
+}
 
-        // process defs:
+fn check_for_name_collisions(
+    defs: &[(String, Sexp)],
+    macro_defs: &[(String, (ParamList, Vec<Sexp>))],
+    imports: &[(String, Rc<(TExp, Type)>)],
+) {
+    let mut names = HashSet::new();
 
-        let rev_topo = check_for_cyclic_deps(defs);
-        let mut exports = HashMap::new();
-
-        let defs: HashMap<String, Rc<(TExp, Type)>> = rev_topo
-            .into_iter()
-            .map(|(name, sexp)| {
-                let exp = sexp_to_exp(sexp);
-                let ty = g(&mut env, &exp);
-                let exp = types::deref_term(exp);
-                let texp = exp_to_texp(&mut conv_env, exp);
-                let rc = Rc::new((texp, ty));
-                if pub_defs.contains(&name) {
-                    exports.insert(name.clone(), rc.clone());
-                }
-                (name, rc)
-            })
-            .chain(imports)
-            .collect();
-
-        for (name, rc) in &defs {
-            let &(_, ref ty) = &**rc;
-            env.vars.insert(name.clone(), ty.clone());
-            conv_env.new_var(name.clone(), ty.clone());
+    for &(ref s, _) in defs {
+        if names.contains(&s) {
+            panic!();
         }
 
-        let exps = sexps_to_exps(top_level);
-        let exps = exps.into_iter().map(|e| f(&mut env, e)).collect_vec();
+        names.insert(s);
+    }
 
-        let texps = exps.into_iter()
-            .map(|e| exp_to_texp(&mut conv_env, e))
-            .collect();
-
-
-        Module {
-            externs: self.externs,
-            top_level: texps,
-            defs,
-            exports,
+    for &(ref s, _) in macro_defs {
+        if names.contains(&s) {
+            panic!();
         }
+
+        names.insert(s);
+    }
+
+    for &(ref s, _) in imports {
+        if names.contains(&s) {
+            panic!();
+        }
+
+        names.insert(s);
     }
 }
 
 fn check_for_cyclic_deps(mut defs: Vec<(String, Sexp)>) -> Vec<(String, Sexp)> {
     fn get_deps(sexp: &Sexp, deps: &mut Vec<usize>, mapping: &HashMap<&str, usize>) {
         match *sexp {
-            Sexp::Atom(_, _, ref s) => {
+            Sexp::Atom(ref s) => {
                 if let Some(&i) = mapping.get(&**s) {
                     deps.push(i);
                 }
             }
-            Sexp::List(_, _, ref c) => {
+            Sexp::List(ref c) => {
                 for s in c {
                     get_deps(s, deps, mapping);
                 }
@@ -278,13 +377,13 @@ fn sexp_let(mut args: Vec<Sexp>) -> Ast {
     assert!(args.len() > 1);
     let body = sexps_to_exps(args.split_off(1));
     let params = match args.remove(0) {
-        Sexp::List(_, _, params) => {
+        Sexp::List(params) => {
             assert!(params.len() % 2 == 0);
             let mut args = Vec::with_capacity(params.len() / 2);
 
             for (sym_sexp, exp_sexp) in params.into_iter().tuples() {
                 let sym = match sym_sexp {
-                    Sexp::Atom(_, _, sym) => sym,
+                    Sexp::Atom(sym) => sym,
                     _ => panic!(),
                 };
 
@@ -306,13 +405,13 @@ fn sexp_fn(mut args: Vec<Sexp>) -> Ast {
     assert!(args.len() > 1);
     let body = sexps_to_exps(args.split_off(1));
     let params = match args.remove(0) {
-        Sexp::List(_, _, params) => {
+        Sexp::List(params) => {
             // (sym, typ)
             let mut args = Vec::with_capacity(params.len());
 
             for sym_sexp in params.into_iter() {
                 let sym = match sym_sexp {
-                    Sexp::Atom(_, _, sym) => sym,
+                    Sexp::Atom(sym) => sym,
                     _ => panic!(),
                 };
 
@@ -348,9 +447,16 @@ fn sexp_if(mut args: Vec<Sexp>) -> Ast {
     }
 }
 
+
+fn sexp_quote(mut args: Vec<Sexp>) -> Ast {
+    debug_assert_eq!(args.len(), 1);
+    Ast::Quote(args.remove(0))
+}
+
+
 fn sexp_to_exp(s: Sexp) -> Ast {
     match s {
-        Sexp::Atom(_, _, sym) => {
+        Sexp::Atom(sym) => {
             match sym.parse() {
                 Ok(val) => Ast::Int(val),
                 _ => {
@@ -362,7 +468,7 @@ fn sexp_to_exp(s: Sexp) -> Ast {
                 }
             }
         }
-        Sexp::List(_, _, mut children) => {
+        Sexp::List(mut children) => {
             if children.is_empty() {
                 Ast::Unit
             } else {
@@ -374,6 +480,7 @@ fn sexp_to_exp(s: Sexp) -> Ast {
                             "let" => sexp_let(children),
                             "if" => sexp_if(children),
                             "fn" => sexp_fn(children),
+                            "quote" => sexp_quote(children),
                             _ => Ast::App(Box::new(Ast::Var(sym)), sexps_to_exps(children)),
                         }
                     }
@@ -393,6 +500,7 @@ fn exp_to_texp(env: &mut CEnv, e: Ast) -> TExp {
         Ast::Unit => TExp::Unit,
         Ast::Bool(val) => TExp::Bool(val),
         Ast::Int(val) => TExp::Int(val),
+        Ast::Quote(sexp) => TExp::Quote(sexp),
         Ast::Let(bindings, body) => {
             scope! {
                 env.vars => env.vars.clone();

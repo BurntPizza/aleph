@@ -23,3 +23,6 @@ slog-envlogger = "0.5"
 
 [lib]
 name = "aleph"
+
+[features]
+bench = []

@@ -36,7 +36,7 @@ impl Default for Env {
         for k in 0..128u8 {
             let k = k as char;
             let v = match k {
-                '_' | '-' | '+' | '*' => TokenChar,
+                '_' | '-' | '+' | '*' | '&' => TokenChar,
                 c if c.is_alphanumeric() => TokenChar,
                 c if c.is_whitespace() => Whitespace,
                 _ => continue,
@@ -48,6 +48,7 @@ impl Default for Env {
         env.new_reader_macro(';', ReaderMacroFunction(line_comment_reader), MacroCharType::Terminating);
         env.new_reader_macro('(', ReaderMacroFunction(left_paren_reader), MacroCharType::Terminating);
         env.new_reader_macro(')', ReaderMacroFunction(right_paren_reader), MacroCharType::Terminating);
+        env.new_reader_macro('\'', ReaderMacroFunction(quote_reader), MacroCharType::Terminating);
 
         env
     }
@@ -284,62 +285,40 @@ pub fn new_node_id() -> usize {
     COUNTER.fetch_add(1, Ordering::SeqCst)
 }
 
-
-#[derive(Copy, Clone)]
-pub struct Span {
-    idx: usize,
-    len: usize,
-}
-
-impl Span {
-    pub fn new(idx: usize, len: usize) -> Self {
-        Span {
-            idx: idx,
-            len: len,
-        }
-    }
-}
-
-impl Debug for Span {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "({}, {})", self.idx, self.len)
-    }
-}
-
-#[derive(Debug, Clone)]
+#[derive(PartialEq, Debug, Clone)]
 pub enum Sexp {
-    Atom(usize, Span, String),
-    List(usize, Span, Vec<Sexp>),
+    Atom(String),
+    List(Vec<Sexp>),
 }
 
 impl Sexp {
-    pub fn id(&self) -> usize {
-        match *self {
-            Sexp::Atom(id, ..) |
-            Sexp::List(id, ..) => id,
-        }
-    }
+    // pub fn id(&self) -> usize {
+    //     match *self {
+    //         Sexp::Atom(..) |
+    //         Sexp::List(..) => id,
+    //     }
+    // }
     // pub fn empty_atom() -> Self {
     //     Sexp::Atom(0, Span::new(0, 0), String::new())
     // }
 
     pub fn is_atom_of(&self, v: &str) -> bool {
         match *self {
-            Sexp::Atom(_, _, ref s) => s == v,
+            Sexp::Atom(ref s) => s == v,
             _ => false,
         }
     }
 
     pub fn extract_atom(self) -> Result<String, Self> {
         match self {
-            Sexp::Atom(_, _, s) => Ok(s),
+            Sexp::Atom(s) => Ok(s),
             _ => Err(self),
         }
     }
 
     pub fn extract_list(self) -> Result<Vec<Sexp>, Self> {
         match self {
-            Sexp::List(_, _, s) => Ok(s),
+            Sexp::List(s) => Ok(s),
             _ => Err(self),
         }
     }
@@ -348,8 +327,8 @@ impl Sexp {
 impl Display for Sexp {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match *self {
-            Sexp::Atom(_, _, ref string) => write!(f, "{}", string),
-            Sexp::List(_, _, ref children) => {
+            Sexp::Atom(ref string) => write!(f, "{}", string),
+            Sexp::List(ref children) => {
                 write!(f,
                        "({})",
                        children.iter().map(ToString::to_string).join(" "))
@@ -488,8 +467,7 @@ fn read_token(stream: &mut InputStream, env: &mut Env) -> ::std::result::Result<
             // step 10
             TokenFinished => {
                 let token = String::from_utf8(token).unwrap();
-                let span = Span::new(positition, token.len());
-                return Ok(Sexp::Atom(new_node_id(), span, token));
+                return Ok(Sexp::Atom(token));
             }
         }
     }
@@ -626,6 +604,10 @@ pub fn line_comment_reader(stream: &mut InputStream,
     Ok(None)
 }
 
+pub fn quote_reader(stream: &mut InputStream, env: &mut Env, _: u8) -> Result<Option<Sexp>, ReadError> {
+    read_token(stream, env).map(|sexp| Some(Sexp::List(vec![Sexp::Atom("quote".into()), sexp])))
+}
+
 /// Reader macro function for reading list s-expressions delimited by parentheses.
 pub fn left_paren_reader(stream: &mut InputStream,
                          env: &mut Env,
@@ -640,8 +622,7 @@ pub fn left_paren_reader(stream: &mut InputStream,
             Some(w) if env.lookup_syntax_type(w) == Whitespace => {}
             Some(c) if c == b')' => {
                 let len = stream.pos() - position;
-                let span = Span::new(position, len);
-                return Ok(Some(Sexp::List(new_node_id(), span, list)));
+                return Ok(Some(Sexp::List(list)));
             }
             Some(_) => {
                 stream.unread();
